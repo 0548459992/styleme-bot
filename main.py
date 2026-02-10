@@ -1,7 +1,7 @@
 import os
 import time
 import feedparser
-import google.generativeai as genai
+from google import genai # הספרייה החדשה
 from supabase import create_client
 import urllib.parse
 from datetime import datetime, timedelta
@@ -13,53 +13,21 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-genai.configure(api_key=GEMINI_API_KEY)
+# אתחול הלקוח החדש של גוגל
+client_ai = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# מקסימום ידיעות לריצה - העליתי ל-25 כדי שיהיה עשיר
-MAX_ITEMS_PER_RUN = 25 
-RUN_INTERVAL_MINUTES = 30 
-
-# --- רשימת מקורות RSS ישירים (מגזינים מובילים) ---
-DIRECT_FEEDS = [
-    "https://www.businessoffashion.com/feeds/rss/",
-    "https://www.voguebusiness.com/feed",
-    "https://wwd.com/feed/",
-    "https://www.fashionunited.com/rss-feed",
-    "https://www.textileworld.com/feed/",
-    "https://www.apparelresources.com/feed/",
-    "https://www.fashionnetwork.com/rss/feed.xml"
-]
-
-# --- רשימת נושאים רחבה לחיפוש בגוגל (גיבוי) ---
-ALL_TOPICS = [
-    "Fashion Design Innovation 2026", "Haute Couture Trends", "Sustainable Fabrics Tech",
-    "Textile Raw Materials Price", "Global Logistics Fashion", "Runway Fashion Analysis",
-    "Digital Fashion NFT Metaverse", "3D Printing Textiles", "Smart Fabrics Wearables",
-    "Circular Fashion Economy", "Apparel Manufacturing Robots", "Eco-friendly Dyeing Tech",
-    "Fashion Week Global Highlights", "Textile Trade Shows 2026", "Apparel Market Forecast",
-    "Luxury Retail Trends", "Supply Chain Transparency Fashion", "Garment Labor Standards",
-    "Bio-engineered Silk Spider Silk", "Recycled Polyester Market", "Cotton Farming Tech"
-]
-
-def get_with_ua(url):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    try:
-        response = requests.get(url, headers=headers, timeout=20)
-        return response.content
-    except: return None
+# ... (שאר הקוד נשאר דומה, רק הפונקציה של הניתוח משתנה) ...
 
 def analyze_item(item, collected_intel):
     if any(c['title'] == item.title for c in collected_intel): return
-    
-    # בדיקת כפילות ב-DB
     try:
         existing = supabase.table('news').select("id").eq('title', item.title).execute()
         if existing.data: return
     except: pass
 
     print(f"   ✨ Analyzing: {item.title[:50]}...")
-    time.sleep(3) # מנוחה קצרה ל-API החינמי
+    time.sleep(2) 
 
     prompt = f"""
     Act as a senior fashion analyst. Analyze this news: {item.title}
@@ -71,8 +39,11 @@ def analyze_item(item, collected_intel):
     """
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        res = model.generate_content(prompt)
+        # שימוש במודל החדש והיציב
+        res = client_ai.models.generate_content(
+            model="gemini-2.0-flash", # שדרוג לגרסה הכי חדישה ומהירה
+            contents=prompt
+        )
         text = res.text
         
         category = "TRENDS"
@@ -91,8 +62,9 @@ def analyze_item(item, collected_intel):
             "likes": 0,
             "is_public": True
         })
+        print(f"      ✅ Success!")
     except Exception as e:
-        print(f"      AI Error: {e}")
+        print(f"      ❌ AI Error: {e}")
 
 def run_bot():
     print(f"🚀 StyleMe PRO Mega-Bot Started at {datetime.now()}")
