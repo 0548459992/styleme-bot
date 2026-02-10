@@ -157,7 +157,8 @@ def run_bot():
     if total_items > 1:
         interval_minutes = RUN_INTERVAL_MINUTES / total_items
     
-    base_time = datetime.utcnow()
+    # לוקחים זמן עכשיו פחות 2 דקות ליתר ביטחון, כדי לוודא שידיעה ראשונה מופיעה מיד
+    base_time = datetime.utcnow() - timedelta(minutes=2)
     
     for i, news_item in enumerate(collected_intel):
         # חישוב זמן הפרסום המדויק לידיעה הזו
