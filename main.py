@@ -15,84 +15,67 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 genai.configure(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- הגדרות הפצה ---
-MAX_ITEMS_PER_RUN = 20 
+# --- הגדרות בטיחות (Safe Mode) ---
+# 12 ידיעות לריצה = כ-500 ידיעות ביום (בטוח מאוד בחבילה החינמית)
+MAX_ITEMS_PER_RUN = 12 
 RUN_INTERVAL_MINUTES = 30 
 
-# --- רשימת נושאים כלליים (ללא מותגים) ---
-# הרשימה מכסה את כל שרשרת הערך: מעיצוב ועד לוגיסטיקה
+# --- רשימת נושאים: שילוב של ביזנס + עיצוב וקריאייטיב ---
 ALL_TOPICS = [
-    # --- TRENDS & FORECASTS (תחזיות וטרנדים) ---
-    "Global Fashion Trend Forecasting 2026",
-    "Textile Color Trends Spring Summer",
-    "Fabric Material Trends Autumn Winter",
-    "Future of Denim Trends Analysis",
-    "Sustainable Fashion Consumer Trends",
-    "Streetwear Market Trends Global",
-    "Luxury Apparel Market Analysis",
-    "Menswear Fashion Market Trends",
-    "Womenswear Design Trends Forecast",
-    "Footwear Industry Design Trends",
-
-    # --- EXHIBITIONS & EVENTS (תערוכות ותחרויות) ---
-    "Global Textile Trade Shows News",
-    "Fashion Week Industry Highlights",
-    "Première Vision Textile News", # תערוכת בדים מרכזית (זה אירוע, לא מותג אופנה)
-    "Pitti Uomo Industry News",
-    "Techtextil Exhibition Updates",
-    "Emerging Fashion Designer Competitions",
-    "Global Fashion Awards Winners",
-    "Textile Innovation Awards News",
-    "Fashion Design Contest Results",
-
-    # --- TECHNOLOGY & INNOVATION (טכנולוגיה) ---
-    "AI in Fashion Design and Manufacturing",
-    "3D Knitting Technology Innovations",
-    "Digital Fashion and Metaverse News",
-    "Smart Fabrics and Wearable Tech",
-    "Biodegradable Textiles Innovations",
-    "Textile Recycling Technology Advances",
-    "Automated Garment Manufacturing Robots",
-    "Blockchain in Fashion Supply Chain",
-    "On-Demand Clothing Production Tech",
-
-    # --- BUSINESS & SUPPLY CHAIN (עסקים ולוגיסטיקה) ---
-    "Global Apparel Supply Chain Issues",
-    "Textile Raw Material Price Trends",
-    "Cotton Market Global Prices",
-    "Synthetic Fibers Market Analysis",
-    "Garment Manufacturing in Vietnam",
-    "Textile Industry in Bangladesh News",
-    "Fashion Retail Logistics Challenges",
-    "Global Shipping Freight Rates Textiles",
-    "Apparel Import Export Regulations",
-    "EU Strategy for Sustainable Textiles",
-
-    # --- GENERAL INDUSTRY (כללי) ---
-    "Fashion Industry Sustainability Report",
-    "Textile Manufacturing Market Size",
-    "Global Apparel Consumption Data",
-    "Circular Fashion Economy News",
-    "Ethical Fashion Labor Standards"
+    # === DESIGN & CREATIVITY (החלק החדש) ===
+    "Fashion Design Trends 2026",
+    "Haute Couture Industry News",
+    "Textile Design Innovation",
+    "Runway Fashion Analysis",
+    "Sustainable Design Techniques Fashion",
+    "Color Trends Fashion Forecast",
+    "Avant-Garde Fashion News",
+    "Fashion Illustration and Art Trends",
+    "Emerging Fashion Designers News",
+    "Conceptual Fashion Trends",
+    "Digital Fashion Design Metaverse",
+    "Fabric Manipulation Techniques",
+    
+    # === BUSINESS & MARKET ===
+    "Global Fashion Retail Market",
+    "Luxury Fashion Market Trends",
+    "Streetwear Market Analysis",
+    "Sportswear Industry News",
+    "Fashion Supply Chain Updates",
+    "Textile Raw Material Prices",
+    
+    # === TECH & INNOVATION ===
+    "AI in Fashion Design",
+    "3D Printing in Fashion",
+    "Smart Fabrics Technology",
+    "Sustainable Textile Materials",
+    
+    # === EVENTS ===
+    "Fashion Week Highlights Global",
+    "Textile Trade Shows News",
+    "Fashion Design Awards"
 ]
 
 def get_google_news_url(query):
     encoded = urllib.parse.quote(query)
-    # חיפוש עד 7 ימים אחורה כדי להבטיח תוצאות
+    # חזרנו ל-7 ימים כדי להבטיח שיש תוצאות גם בנושאי נישה
     return f"https://news.google.com/rss/search?q={encoded}+when:7d&hl=en-US&gl=US&ceid=US:en"
 
 def analyze_and_add(item, collected_intel):
-    print(f"   ⚡ Match Found: {item.title[:40]}...")
-    time.sleep(2) 
+    # הגנה מפני חריגה
+    if len(collected_intel) >= MAX_ITEMS_PER_RUN: return
 
-    # ההנחיה ל-AI עודכנה כדי להתמקד בהיבט המקצועי/תעשייתי
+    print(f"   ⚡ Match Found: {item.title[:40]}...")
+    time.sleep(3) # השהייה בטוחה
+
+    # הנחיה ל-AI להתמקד גם בעיצוב ובאסתטיקה
     prompt = f"""
-    Act as a senior business analyst for the fashion & textile industry.
+    Act as a fashion industry expert.
     Analyze this news: {item.title} ({item.link})
     
     Task:
-    1. Summarize in HEBREW (2-3 sentences). Focus on the *industry impact*, *innovation*, or *market shift*.
-    2. Categorize exactly as: 'LOGISTICS', 'MARKET', 'TECH', 'REGULATION', 'TRENDS'.
+    1. Summarize in HEBREW (2 sentences). If it's about design, focus on aesthetics/materials. If business, focus on impact.
+    2. Categorize: 'TRENDS' (for design/style), 'LOGISTICS', 'MARKET', 'TECH', 'REGULATION'.
     
     Format:
     Category: [CATEGORY]
@@ -102,36 +85,37 @@ def analyze_and_add(item, collected_intel):
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         res = model.generate_content(prompt)
-    except:
-        model = genai.GenerativeModel('gemini-pro')
-        res = model.generate_content(prompt)
+        
+        text = res.text
+        category = "TRENDS" # ברירת מחדל לנושאי עיצוב
+        content = text
+        
+        if "Category:" in text:
+            parts = text.split("Summary:")
+            if len(parts) > 1:
+                category = parts[0].replace("Category:", "").strip()
+                content = parts[1].strip()
+            else:
+                content = text.replace("Category:", "").replace("Summary:", "")
+        
+        content = content.replace("**", "").replace("*", "").strip()
 
-    text = res.text
-    category = "GLOBAL"
-    content = text
-    
-    if "Category:" in text:
-        parts = text.split("Summary:")
-        if len(parts) > 1:
-            category = parts[0].replace("Category:", "").strip()
-            content = parts[1].strip()
-        else:
-            content = text.replace("Category:", "").replace("Summary:", "")
-    
-    content = content.replace("**", "").replace("*", "").strip()
-
-    collected_intel.append({
-        "title": item.title,
-        "content": content,
-        "category": category,
-        "source_url": item.link,
-        "likes": 0,
-        "is_public": True
-    })
-    print(f"   📥 Added to queue. Total: {len(collected_intel)}")
+        collected_intel.append({
+            "title": item.title,
+            "content": content,
+            "category": category,
+            "source_url": item.link,
+            "likes": 0,
+            "is_public": True
+        })
+        print(f"   📥 Added to queue. Total: {len(collected_intel)}")
+        
+    except Exception as e:
+        print(f"   ⚠️ AI Error: {e}")
+        time.sleep(5)
 
 def run_bot():
-    print(f"🚀 StyleMe PRO: General Industry Scanner Started at {datetime.now()}")
+    print(f"🚀 StyleMe PRO: Design & Business Scanner Started at {datetime.now()}")
     
     scan_queue = ALL_TOPICS.copy()
     random.shuffle(scan_queue)
@@ -142,57 +126,57 @@ def run_bot():
     
     for topic in scan_queue:
         if len(collected_intel) >= MAX_ITEMS_PER_RUN:
-            print("🛑 Max items limit reached.")
+            print("🛑 Max safe limit reached.")
             break
             
         url = get_google_news_url(topic)
-        print(f"🔎 Scanning Topic: {topic}...")
+        print(f"🔎 Scanning: {topic}...")
         
         try:
             feed = feedparser.parse(url)
             if not feed.entries: 
-                print("   No entries found.")
+                print("   No entries.")
                 continue
             
             found_new_for_topic = False
             
-            # סורק את כל הפיד של אותו נושא
+            # סורקים עד שמוצאים ידיעה חדשה אחת לנושא
             for item in feed.entries: 
                 if found_new_for_topic: break 
+                if len(collected_intel) >= MAX_ITEMS_PER_RUN: break
 
-                # בדיקת כפילות בזיכרון
+                # בדיקת כפילות
                 if any(c['title'] == item.title for c in collected_intel): continue 
-
-                # בדיקת כפילות בדאטה בייס
                 try:
                     existing = supabase.table('news').select("id").eq('title', item.title).execute()
                     if existing.data and len(existing.data) > 0: continue 
                 except: continue
 
-                # מצאנו ידיעה חדשה
                 analyze_and_add(item, collected_intel)
                 found_new_for_topic = True 
             
         except Exception as e:
             print(f"   ❌ Error: {e}")
 
-    # --- רשת ביטחון: חיפוש כללי מאוד אם לא מצאנו כלום ---
-    if len(collected_intel) < 2:
-        print("⚠️ Low intel count. Running General Fashion Scan...")
-        # חיפוש רחב מאוד אך ללא שמות מותגים
-        emergency_topics = ["Fashion Industry News", "Textile Industry Updates", "Apparel Market Analysis"]
+    # --- רשת ביטחון: אם לא מצאנו מספיק, מחפשים כללי ---
+    if len(collected_intel) < 3:
+        print("⚠️ Low intel count. Running BROAD Creative Scan...")
+        # חיפוש רחב מאוד שיביא תוצאות בוודאות
+        broad_topics = ["Fashion Design News", "Global Fashion Trends", "Textile Industry News"]
         
-        for em_topic in emergency_topics:
-            if len(collected_intel) >= 5: break
+        for topic in broad_topics:
+            if len(collected_intel) >= MAX_ITEMS_PER_RUN: break
             try:
-                url = get_google_news_url(em_topic)
+                url = get_google_news_url(topic)
                 feed = feedparser.parse(url)
-                for item in feed.entries[:5]:
+                for item in feed.entries[:5]: # בודקים את ה-5 הראשונים
+                    if len(collected_intel) >= MAX_ITEMS_PER_RUN: break
                     if any(c['title'] == item.title for c in collected_intel): continue
                     try:
                         existing = supabase.table('news').select("id").eq('title', item.title).execute()
                         if existing.data: continue
                     except: continue
+                    
                     analyze_and_add(item, collected_intel)
             except: continue
 
@@ -200,7 +184,7 @@ def run_bot():
     total_items = len(collected_intel)
     
     if total_items == 0:
-        print("😴 No new intel found in this run.")
+        print("😴 No new intel found (Checked specific + broad topics).")
         return
 
     print(f"--- Phase 2: Distributing {total_items} items ---")
