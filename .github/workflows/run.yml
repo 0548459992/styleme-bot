@@ -1,0 +1,25 @@
+name: StyleMe Intelligence Bot
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'  # רץ כל 20 דקות
+  workflow_dispatch:        # מאפשר הרצה ידנית בלחיצת כפתור
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Run Bot
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python main.py
