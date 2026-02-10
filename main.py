@@ -16,12 +16,12 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# הגדרות ריצה (ביצועים מול עושר תוכן)
-MAX_ITEMS_PER_RUN = 18 
-WAIT_BETWEEN_AI = 7
-TOPICS_PER_SESSION = 15 # כמה נושאים להגריל בכל ריצה
+# הגדרות ביצועים
+MAX_ITEMS_PER_RUN = 15 
+WAIT_BETWEEN_AI = 10 
+TASKS_PER_SESSION = 30 # הגדלתי את כמות המשימות הנדגמות לריצה
 
-# === בנק המקורות הישירים (מגזינים מובילים) ===
+# === 20 מקורות RSS ישירים (מגזינים ופורטלים מובילים) ===
 DIRECT_FEEDS = [
     "https://www.businessoffashion.com/feeds/rss/",
     "https://www.voguebusiness.com/feed",
@@ -36,50 +36,59 @@ DIRECT_FEEDS = [
     "https://www.fashiondive.com/feeds/news/",
     "https://www.ecotextile.com/news?format=feed&type=rss",
     "https://knittingindustry.com/feed/",
-    "https://www.fibre2fashion.com/news/rss-feeds/fashion-news.xml"
+    "https://www.fibre2fashion.com/news/rss-feeds/fashion-news.xml",
+    "https://www.thefashionlaw.com/feed/",
+    "https://www.just-style.com/feed/",
+    "https://www.fashion-history.com/feed",
+    "https://www.insidefashion.com/feed",
+    "https://www.fashionrevelation.com/feed",
+    "https://www.sportswear-international.com/feed"
 ]
 
-# === בנק הנושאים העצום (80 נושאים) ===
+# === בנק 110 נושאים (The Intelligence Bank) ===
 ALL_TOPICS = [
-    # עיצוב ואסתטיקה
-    "Avant-Garde Fashion Design", "Haute Couture Collections", "Runway Trends 2026",
-    "Minimalist Fashion Aesthetics", "Cyberpunk Fashion Trends", "Sustainable Design Methods",
-    "Menswear Tailoring Innovation", "Womenswear Silhouettes Forecast", "Footwear Design Sculpture",
-    "Knitwear Texture Innovation", "Bridal Wear Industry Trends", "Childrenswear Market Design",
-    "Accessories and Jewelry Design Trends", "Streetwear Subculture Trends", "Vintage Revival Fashion",
-    "Costume Design for Film News", "Color Theory in Fashion Design", "Fashion Illustration Masters",
-    "Emerging Designers Global Showcase", "Fashion Design Awards Innovation",
+    # --- DESIGN & ART (עיצוב ואסתטיקה) ---
+    "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026",
+    "Minimalist Fashion Movement", "Cyberpunk & Techwear Aesthetics", "Sustainable Couture Techniques",
+    "Bespoke Tailoring Industry News", "Womenswear Silhouette Innovation", "Footwear Sculpture & Design",
+    "Knitwear Structure Innovation", "Luxury Bridal Market Trends", "Experimental Accessories Design",
+    "Streetwear Subculture Research", "Vintage & Archival Fashion Market", "Costume Design & Cinema Art",
+    "Fashion Illustration Modern Masters", "Emerging Designers Global Talent", "Textile Pattern Design Trends",
+    "Gender-Neutral Fashion Design", "Artisanal Embroidery Techniques", "Deconstruction in Fashion Design",
     
-    # טקסטיל וחומרים
-    "Smart Fabrics and Interactive Textiles", "Biodegradable Textile Science", "Recycled Ocean Plastic Fabrics",
-    "Spider Silk Textile Innovation", "Mycelium Leather Research", "High-Tech Sportswear Materials",
-    "Carbon Fiber Textiles", "Nanotechnology in Fabrics", "Sustainable Dyeing Technology",
-    "Denim Weaving Innovation", "Wool Industry Quality Trends", "Luxury Cashmere Market",
-    "Digital Textile Printing Progress", "Non-woven Fabric Applications", "Technical Textiles for Aerospace",
-    "Cotton Genetic Engineering News", "Linen Production Sustainability", "Textile Finishing Innovation",
+    # --- TEXTILES & MATERIALS (טקסטיל וחומרים) ---
+    "Smart Fabrics & Electronic Textiles", "Biodegradable Synthetic Fibers", "Recycled Ocean Plastic Textiles",
+    "Spider Silk Bio-Engineering", "Mycelium & Mushroom Leather", "High-Performance Sportswear Fabrics",
+    "Carbon Fiber Apparel Applications", "Nanotechnology in Textile Finishing", "Waterless Dyeing Technology",
+    "Denim Indigo Weaving Innovations", "Merino Wool Sustainability Trends", "Cashmere Supply Chain Ethics",
+    "Digital Inkjet Textile Printing", "Non-woven Medical Textiles", "Aerospace Grade Technical Fabrics",
+    "Cotton Genetic Modification News", "Industrial Hemp Fiber Processing", "Antibacterial Fabric Innovation",
+    "Fire-Retardant Textile Research", "Phase Change Materials in Clothing", "3D Weaving Technology News",
     
-    # טכנולוגיה ודיגיטל
-    "AI-Generated Fashion Design", "3D Body Scanning Fashion", "Virtual Fitting Room UX",
-    "Metaverse Fashion Collections", "NFT Luxury Goods Authentication", "Blockchain Supply Chain Textiles",
-    "Robotic Garment Assembly", "Digital Product Passports EU", "AI Style Personalization Tech",
-    "E-commerce AR Shopping Experience", "Smart Mirrors Retail Tech", "Fashion Data Analytics Trends",
+    # --- TECH & DIGITAL (טכנולוגיה ודיגיטל) ---
+    "Generative AI in Apparel Design", "3D Body Modeling & Fit Tech", "Virtual Try-On UX Innovation",
+    "Metaverse Luxury Collections", "Blockchain for Luxury Authentication", "NFT Fashion Assets Regulation",
+    "Robotic Sewing & Assembly Lines", "Digital Product Passports Textiles", "Big Data in Fashion Retail",
+    "AR-Powered Retail Experiences", "Artificial Intelligence Style Curators", "Fashion E-commerce Algorithm Trends",
+    "Livestream Shopping Tech Global", "Interactive Garment QR Codes", "Smart Warehouse Logistics Fashion",
     
-    # שוק, כלכלה ולוגיסטיקה
-    "Global Fashion Retail Outlook", "Luxury Market Economics 2026", "Apparel Supply Chain Resilience",
-    "Textile Raw Material Inflation", "Shipping Port Crisis Fashion", "Last Mile Delivery Apparel",
-    "Resale and Second-hand Market Growth", "Rental Fashion Business Models", "Fast Fashion Environmental Impact",
-    "Circular Fashion Business Strategy", "Fashion Merchandising AI Tools", "Global Trade Tariffs Textiles",
-    "Apparel Sourcing Strategy Vietnam", "Textile Hubs Expansion Turkey", "India Apparel Export Growth",
+    # --- MARKET & ECONOMY (שוק וכלכלה) ---
+    "Global Fashion Retail Growth 2026", "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
+    "Raw Material Price Volatility", "Logistics Shipping Port Delays", "Air Freight Trends for Fashion",
+    "Resale & Circular Economy Growth", "Clothing Rental Subscription Models", "Direct-to-Consumer Strategy News",
+    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hubs Ethiopia",
+    "Post-Fast Fashion Business Models", "Merchandising Planning AI Software", "Impact of Inflation on Fashion",
     
-    # קיימות ורגולציה
-    "EU Textile Waste Directives", "Fashion Industry Carbon Neutrality", "Water Conservation in Textiles",
-    "Ethical Labor Practices Apparel", "Microplastic Shedding Solutions", "Transparency in Fashion Supply",
-    "B-Corp Fashion Brands News", "Greenwashing Regulations Global", "Regenerative Agriculture Cotton",
-    "Social Responsibility Fashion Industry", "Traceability Technology Fabrics"
+    # --- SUSTAINABILITY & LAW (קיימות ורגולציה) ---
+    "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
+    "Fair Trade Labor Standards News", "Microplastic Filtration Solutions", "Supply Chain Traceability Software",
+    "B-Corp Certified Fashion Brands", "Anti-Greenwashing Marketing Laws", "Regenerative Cotton Farming News",
+    "Animal Welfare in Fashion Industry", "Zero-Waste Pattern Making Tech", "Chemical Safety in Textile Dyeing",
+    "Fashion Intellectual Property Law", "Copyright Protection for Designs", "Counterfeit Detection Technology"
 ]
 
 def get_with_ua(url):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'}
     try:
         response = requests.get(url, headers=headers, timeout=15)
         return response.content
@@ -97,7 +106,7 @@ def analyze_item(item, collected_intel):
     print(f"   ✨ Analyzing: {item.title[:45]}...")
     time.sleep(WAIT_BETWEEN_AI)
 
-    prompt = f"Summarize this fashion industry news in HEBREW (2 professional sentences) and pick ONE category (TRENDS, MARKET, TECH, LOGISTICS, REGULATION): {item.title}"
+    prompt = f"Summarize this industry news in HEBREW (2 professional sentences) and pick ONE category (TRENDS, MARKET, TECH, LOGISTICS, REGULATION): {item.title}"
     
     try:
         res = client_ai.models.generate_content(model="gemini-2.0-flash", contents=prompt)
@@ -114,20 +123,18 @@ def analyze_item(item, collected_intel):
         print("      ✅ OK.")
         return "OK"
     except Exception as e:
-        if "429" in str(e):
-            print("      🛑 Quota Exceeded. Finalizing batch.")
-            return "STOP"
+        if "429" in str(e): return "STOP"
         return "FAIL"
 
 def run_bot():
-    print(f"🚀 StyleMe PRO: Mega-Bulldozer Started at {datetime.now()}")
+    print(f"🚀 StyleMe PRO: Total Intelligence Engine Started at {datetime.now()}")
     collected_intel = []
 
-    # הגרלת נושאים לריצה הנוכחית
-    random_topics = random.sample(ALL_TOPICS, min(TOPICS_PER_SESSION, len(ALL_TOPICS)))
+    # הגרלת משימות מהבנק העצום
+    random_topics = random.sample(ALL_TOPICS, min(TASKS_PER_SESSION // 2, len(ALL_TOPICS)))
+    random_feeds = random.sample(DIRECT_FEEDS, min(TASKS_PER_SESSION // 2, len(DIRECT_FEEDS)))
     
-    # בניית רשימת המשימות
-    tasks = [(f, "RSS") for f in DIRECT_FEEDS] + [(t, "TOPIC") for t in random_topics]
+    tasks = [(f, "RSS") for f in random_feeds] + [(t, "TOPIC") for t in random_topics]
     random.shuffle(tasks)
 
     for source, s_type in tasks:
@@ -143,8 +150,7 @@ def run_bot():
                     if status in ["MAX", "STOP"]: break
         else:
             print(f"🔎 Search: {source}...")
-            encoded = urllib.parse.quote(source)
-            url = f"https://news.google.com/rss/search?q={encoded}+when:7d&hl=en-US&gl=US&ceid=US:en"
+            url = f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}+when:7d&hl=en-US&gl=US&ceid=US:en"
             content = get_with_ua(url)
             if content:
                 feed = feedparser.parse(content)
@@ -152,7 +158,9 @@ def run_bot():
                     status = analyze_item(item, collected_intel)
                     if status in ["MAX", "STOP"]: break
         
-        if status == "STOP": break
+        if status == "STOP": 
+            print("🛑 API Quota Limit. Moving to publish phase.")
+            break
 
     if not collected_intel:
         print("😴 No new items found.")
