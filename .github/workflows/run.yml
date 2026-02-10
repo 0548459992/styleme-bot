@@ -2,21 +2,26 @@ name: StyleMe Intelligence Bot
 
 on:
   schedule:
-    - cron: '*/20 * * * *'  # רץ כל 20 דקות
-  workflow_dispatch:        # מאפשר הרצה ידנית בלחיצת כפתור
+    - cron: '*/30 * * * *'  # רץ כל 30 דקות בדיוק (אופטימלי לחינם)
+  workflow_dispatch:        # מאפשר לך להריץ ידנית מתי שבא לך
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10     # הגנה: אם נתקע, תהרוג את התהליך אחרי 10 דקות שלא יבזבז זמן
+    
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+          cache: 'pip'      # שומר את ההתקנות בזכרון כדי לחסוך זמן ריצה
+          
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install google-generativeai feedparser supabase
+
       - name: Run Bot
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
