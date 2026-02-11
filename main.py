@@ -14,6 +14,9 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
+# הגדרת המודל ל-1.5 פלאש למקסימום מכסה חינמית
+MODEL_NAME = "gemini-1.5-flash"
+
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -34,9 +37,8 @@ DIRECT_FEEDS = [
     "https://www.ecotextile.com/news?format=feed&type=rss"
 ]
 
-# --- בנק 110 הנושאים המלא (The Intelligence Bank) ---
+# --- בנק 110 הנושאים המלא ---
 ALL_TOPICS = [
-    # Design & Art
     "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026", "Runway Color Forecast 2027",
     "Minimalist Fashion Movement", "Cyberpunk & Techwear Aesthetics", "Sustainable Couture Techniques",
     "Bespoke Tailoring Industry News", "Womenswear Silhouette Innovation", "Footwear Sculpture & Design",
@@ -45,7 +47,6 @@ ALL_TOPICS = [
     "Fashion Illustration Modern Masters", "Emerging Designers Global Talent", "Textile Pattern Design Trends",
     "Gender-Neutral Fashion Design", "Artisanal Embroidery Techniques", "Deconstruction in Fashion Design",
     "Modest Fashion Global Trends", "Resort Wear Design Innovation",
-    # Textiles & Materials
     "Smart Fabrics & Electronic Textiles", "Biodegradable Synthetic Fibers", "Recycled Ocean Plastic Textiles",
     "Spider Silk Bio-Engineering", "Mycelium & Mushroom Leather", "High-Performance Sportswear Fabrics",
     "Carbon Fiber Apparel Applications", "Nanotechnology in Textile Finishing", "Waterless Dyeing Technology",
@@ -54,29 +55,24 @@ ALL_TOPICS = [
     "Cotton Genetic Modification News", "Industrial Hemp Fiber Processing", "Antibacterial Fabric Innovation",
     "Fire-Retardant Textile Research", "Phase Change Materials in Clothing", "3D Weaving Technology News",
     "Bio-based Polymers for Fashion", "Textile Waste Upcycling Tech",
-    # Fashion Tech
     "Generative AI in Apparel Design", "3D Body Modeling & Fit Tech", "Virtual Try-On UX Innovation",
     "Metaverse Luxury Collections", "Blockchain for Luxury Authentication", "NFT Fashion Assets Regulation",
     "Robotic Sewing & Assembly Lines", "Digital Product Passports Textiles", "Big Data in Fashion Retail",
     "AR-Powered Retail Experiences", "Artificial Intelligence Style Curators", "Fashion E-commerce Algorithm Trends",
     "Livestream Shopping Tech Global", "Interactive Garment QR Codes", "Smart Warehouse Logistics Fashion",
     "Automated Textile Quality Control", "Predictive Analytics for Fashion Trends",
-    # Business & Market
     "Global Fashion Retail Growth 2026", "Global Fashion Retail Growth 2027", "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
-    "Raw Material Price Volatility", "Logistics Shipping Port Delays", "Air Freight Trends for Fashion",
+    "Raw Material Price Volatility", "Logistics Shipping Port Delay", "Air Freight Trends for Fashion",
     "Resale & Circular Economy Growth", "Clothing Rental Subscription Models", "Direct-to-Consumer Strategy News",
     "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hubs Ethiopia",
     "Post-Fast Fashion Business Models", "Merchandising Planning AI Software", "Impact of Inflation on Fashion",
     "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth", "Turkey Apparel Manufacturing News",
-    "Global Cotton Stock Index",
-    # Sustainability & Law
-    "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
+    "Global Cotton Stock Index", "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
     "Fair Trade Labor Standards News", "Microplastic Filtration Solutions", "Supply Chain Traceability Software",
     "B-Corp Certified Fashion Brands", "Anti-Greenwashing Marketing Laws", "Regenerative Cotton Farming News",
     "Animal Welfare in Fashion Industry", "Zero-Waste Pattern Making Tech", "Chemical Safety in Textile Dyeing",
     "Fashion Intellectual Property Law", "Copyright Protection for Designs", "Counterfeit Detection Technology",
     "Garment Worker Minimum Wage News", "Textile Recycling Infrastructure EU",
-    # Culture & Events
     "Global Fashion Week Highlights", "Textile Innovation Trade Shows", "Museum Costume Exhibitions",
     "Fashion History Research News", "Iconic Designer Retrospectives", "Subculture Influence on High Fashion",
     "Ethno-Fashion Design Preservation", "Fashion Photography New Trends", "Luxury Hospitality & Fashion Collabs",
@@ -100,15 +96,17 @@ def update_ai_budget(count):
     supabase.table('ai_budget').update({"requests_today": current + count}).eq('id', 1).execute()
 
 def analyze_multilingual(item, budget):
-    # קביעת רמת הפירוט לפי התקציב הנותר
+    # המתנה של 10 שניות למניעת חסימת RPM במסלול החינמי
+    time.sleep(10)
+    
     if budget < 800:
-        target_langs = LANG_CODES # טורבו: 20 שפות
+        target_langs = LANG_CODES
         needs_more = False
     elif budget < 1300:
-        target_langs = ["he", "en", "it", "fr", "zh", "tr"] # הילוך בינוני
+        target_langs = ["he", "en", "it", "fr", "zh", "tr"]
         needs_more = True
     else:
-        return None, True # חיסכון קיצוני
+        return None, True
 
     prompt = f"""
     Analyze this news: {item.title}
@@ -123,22 +121,22 @@ def analyze_multilingual(item, budget):
     }}
     """
     try:
-        res = client_ai.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
         clean_json = res.text.strip().replace("```json", "").replace("```", "")
         return json.loads(clean_json), needs_more
     except Exception as e:
-        print(f"AI Error: {e}")
+        print(f"AI Error (Model {MODEL_NAME}): {e}")
         return None, True
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Global Engine. Today's Budget Usage: {budget}/1500")
+    print(f"🚀 StyleMe Global Engine (Max Free Mode). Budget: {budget}/1500")
     
     items_to_publish = []
     
-    # דגימה אקראית של משימות
-    selected_feeds = random.sample(DIRECT_FEEDS, min(5, len(DIRECT_FEEDS)))
-    selected_topics = random.sample(ALL_TOPICS, min(10, len(ALL_TOPICS)))
+    # דגימה אקראית
+    selected_feeds = random.sample(DIRECT_FEEDS, min(4, len(DIRECT_FEEDS)))
+    selected_topics = random.sample(ALL_TOPICS, min(8, len(ALL_TOPICS)))
     tasks = [(f, "RSS") for f in selected_feeds] + [(t, "TOPIC") for t in selected_topics]
     random.shuffle(tasks)
 
@@ -156,7 +154,7 @@ def run_bot():
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
             feed = feedparser.parse(resp.content)
             
-            for entry in feed.entries[:2]:
+            for entry in feed.entries[:1]: # לוקחים רק ידיעה אחת מכל מקור לטובת גיוון ומכסה
                 if len(items_to_publish) >= 12: break
                 
                 existing = supabase.table('news').select("id").eq('source_url', entry.link).execute()
@@ -185,7 +183,7 @@ def run_bot():
             print(f"Error processing {url[:30]}: {e}")
             continue
 
-    # --- מנגנון ה-DRIP FEEDING (פריסת הפרסום על פני 30 דקות) ---
+    # --- DRIP FEEDING ---
     if items_to_publish:
         print(f"🕒 Scheduling {len(items_to_publish)} items over 28 minutes...")
         
@@ -194,7 +192,6 @@ def run_bot():
         start_time = datetime.utcnow()
 
         for i, item in enumerate(items_to_publish):
-            # חישוב זמן הפרסום המדורג
             scheduled_time = start_time + timedelta(minutes=i * interval)
             item["created_at"] = scheduled_time.isoformat()
             
@@ -206,7 +203,7 @@ def run_bot():
 
         update_ai_budget(len(items_to_publish))
     else:
-        print("😴 No new items to publish.")
+        print("😴 No new items found.")
 
 if __name__ == "__main__":
     run_bot()
