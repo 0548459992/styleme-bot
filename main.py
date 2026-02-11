@@ -100,15 +100,15 @@ def update_ai_budget(count):
     supabase.table('ai_budget').update({"requests_today": current + count}).eq('id', 1).execute()
 
 def analyze_multilingual(item, budget):
-    # קביעת רמת הפירוט (הילוך) לפי התקציב היומי הנותר
+    # קביעת רמת הפירוט לפי התקציב הנותר
     if budget < 800:
-        target_langs = LANG_CODES # טורבו: כל 20 השפות
+        target_langs = LANG_CODES # טורבו: 20 שפות
         needs_more = False
     elif budget < 1300:
         target_langs = ["he", "en", "it", "fr", "zh", "tr"] # הילוך בינוני
         needs_more = True
     else:
-        return None, True # מצב חיסכון קיצוני
+        return None, True # חיסכון קיצוני
 
     prompt = f"""
     Analyze this news: {item.title}
@@ -134,17 +134,17 @@ def run_bot():
     budget = get_ai_budget()
     print(f"🚀 StyleMe Global Engine. Today's Budget Usage: {budget}/1500")
     
-    collected_intel = []
-    # דגימה אקראית של משימות כדי לשמור על גיוון בכל ריצה
+    items_to_publish = []
+    
+    # דגימה אקראית של משימות
     selected_feeds = random.sample(DIRECT_FEEDS, min(5, len(DIRECT_FEEDS)))
     selected_topics = random.sample(ALL_TOPICS, min(10, len(ALL_TOPICS)))
     tasks = [(f, "RSS") for f in selected_feeds] + [(t, "TOPIC") for t in selected_topics]
     random.shuffle(tasks)
 
     for source, s_type in tasks:
-        if len(collected_intel) >= 12: break
+        if len(items_to_publish) >= 12: break
         
-        # בחירת שפת חיפוש אקראית לקבלת סקופים מקומיים
         if s_type == "TOPIC":
             search_lang = random.choice(["en", "it", "fr", "zh", "tr"])
             encoded_query = urllib.parse.quote(source)
@@ -157,40 +157,56 @@ def run_bot():
             feed = feedparser.parse(resp.content)
             
             for entry in feed.entries[:2]:
-                if len(collected_intel) >= 12: break
+                if len(items_to_publish) >= 12: break
                 
-                # בדיקת כפילות ב-Database
                 existing = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if existing.data: continue
 
                 ai_data, needs_more = analyze_multilingual(entry, budget)
                 
                 if ai_data:
-                    # שמירה בפורמט JSONB רב-לשוני
-                    supabase.table('news').insert({
+                    items_to_publish.append({
                         "source_url": entry.link,
                         "category": ai_data.get('category', 'TRENDS'),
                         "titles": ai_data.get('titles', {"en": entry.title}),
                         "summaries": ai_data.get('summaries', {}),
                         "needs_full_translation": needs_more,
                         "is_public": True
-                    }).execute()
-                    update_ai_budget(1)
-                    budget += 1
-                    collected_intel.append(entry.link)
-                    print(f"✅ Published: {entry.title[:40]}...")
+                    })
                 else:
-                    # שמירה גולמית אם ה-AI בחיסכון
-                    supabase.table('news').insert({
+                    items_to_publish.append({
                         "source_url": entry.link,
                         "titles": {"en": entry.title},
+                        "summaries": {"en": "AI Summary deferred for budget saving."},
                         "needs_full_translation": True,
                         "is_public": True
-                    }).execute()
-                    print(f"📝 Raw Save (No AI): {entry.title[:40]}")
+                    })
         except Exception as e:
             print(f"Error processing {url[:30]}: {e}")
             continue
+
+    # --- מנגנון ה-DRIP FEEDING (פריסת הפרסום על פני 30 דקות) ---
+    if items_to_publish:
+        print(f"🕒 Scheduling {len(items_to_publish)} items over 28 minutes...")
+        
+        total_minutes = 28
+        interval = total_minutes / len(items_to_publish) if len(items_to_publish) > 1 else 0
+        start_time = datetime.utcnow()
+
+        for i, item in enumerate(items_to_publish):
+            # חישוב זמן הפרסום המדורג
+            scheduled_time = start_time + timedelta(minutes=i * interval)
+            item["created_at"] = scheduled_time.isoformat()
+            
+            try:
+                supabase.table('news').insert(item).execute()
+                print(f"✅ Scheduled: {scheduled_time.strftime('%H:%M:%S')} | {list(item['titles'].values())[0][:30]}")
+            except Exception as e:
+                print(f"❌ DB Error: {e}")
+
+        update_ai_budget(len(items_to_publish))
+    else:
+        print("😴 No new items to publish.")
 
 if __name__ == "__main__":
     run_bot()
