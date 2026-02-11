@@ -15,7 +15,7 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 # שימוש במודל 1.5 פלאש למכסה מקסימלית בחינם (1,500 ליום)
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-2.0-flash"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
