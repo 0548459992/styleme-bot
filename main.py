@@ -14,7 +14,7 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# הגדרת המודל ל-1.5 פלאש למקסימום מכסה חינמית
+# שימוש במודל 1.5 פלאש למכסה מקסימלית בחינם (1,500 ליום)
 MODEL_NAME = "gemini-1.5-flash"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
@@ -88,36 +88,32 @@ def get_ai_budget():
             supabase.table('ai_budget').update({"requests_today": 0, "last_reset": datetime.now().isoformat()}).eq('id', 1).execute()
             return 0
         return budget['requests_today']
-    except:
-        return 0
+    except: return 0
 
 def update_ai_budget(count):
     current = get_ai_budget()
     supabase.table('ai_budget').update({"requests_today": current + count}).eq('id', 1).execute()
 
 def analyze_multilingual(item, budget):
-    # המתנה של 10 שניות למניעת חסימת RPM במסלול החינמי
-    time.sleep(10)
+    # המתנה קצרה למניעת חסימת RPM במסלול החינמי
+    time.sleep(8)
     
-    if budget < 800:
-        target_langs = LANG_CODES
-        needs_more = False
-    elif budget < 1300:
-        target_langs = ["he", "en", "it", "fr", "zh", "tr"]
-        needs_more = True
+    # מכסה של 1500 ליום מאפשרת לנו לעבוד בחופשיות יחסית
+    if budget < 1400:
+        target_langs = LANG_CODES if budget < 1000 else ["he", "en", "it", "fr", "zh", "tr"]
+        needs_more = budget >= 1000
     else:
         return None, True
 
     prompt = f"""
     Analyze this news: {item.title}
     1. Categorize exactly as one of: TRENDS, MARKET, TECH, LOGISTICS, REGULATION.
-    2. Provide a professional 2-sentence summary for each of these language codes: {', '.join(target_langs)}.
-    
+    2. Provide a professional 2-sentence summary for each code: {', '.join(target_langs)}.
     Return ONLY a valid JSON object:
     {{
       "category": "...",
-      "titles": {{"he": "...", "en": "...", "it": "...", ...}},
-      "summaries": {{"he": "...", "en": "...", "it": "...", ...}}
+      "titles": {{"he": "...", "en": "...", ...}},
+      "summaries": {{"he": "...", "en": "...", ...}}
     }}
     """
     try:
@@ -125,23 +121,23 @@ def analyze_multilingual(item, budget):
         clean_json = res.text.strip().replace("```json", "").replace("```", "")
         return json.loads(clean_json), needs_more
     except Exception as e:
-        print(f"AI Error (Model {MODEL_NAME}): {e}")
+        print(f"AI Error: {e}")
         return None, True
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Global Engine (Max Free Mode). Budget: {budget}/1500")
+    print(f"🚀 StyleMe Global Engine (Broad Scan Mode). Budget: {budget}/1500")
     
     items_to_publish = []
     
-    # דגימה אקראית
-    selected_feeds = random.sample(DIRECT_FEEDS, min(4, len(DIRECT_FEEDS)))
-    selected_topics = random.sample(ALL_TOPICS, min(8, len(ALL_TOPICS)))
+    # הגרלת משימות מהבנק
+    selected_feeds = random.sample(DIRECT_FEEDS, min(6, len(DIRECT_FEEDS)))
+    selected_topics = random.sample(ALL_TOPICS, min(12, len(ALL_TOPICS)))
     tasks = [(f, "RSS") for f in selected_feeds] + [(t, "TOPIC") for t in selected_topics]
     random.shuffle(tasks)
 
     for source, s_type in tasks:
-        if len(items_to_publish) >= 12: break
+        if len(items_to_publish) >= 15: break
         
         if s_type == "TOPIC":
             search_lang = random.choice(["en", "it", "fr", "zh", "tr"])
@@ -154,12 +150,15 @@ def run_bot():
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
             feed = feedparser.parse(resp.content)
             
-            for entry in feed.entries[:1]: # לוקחים רק ידיעה אחת מכל מקור לטובת גיוון ומכסה
-                if len(items_to_publish) >= 12: break
+            # סורקים את כל הפיד כדי לא לפספס כלום
+            for entry in feed.entries:
+                if len(items_to_publish) >= 15: break
                 
+                # בדיקת כפילות ב-DB - מהיר וחינמי
                 existing = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if existing.data: continue
 
+                # רק ידיעה חדשה באמת עוברת לניתוח AI
                 ai_data, needs_more = analyze_multilingual(entry, budget)
                 
                 if ai_data:
@@ -171,11 +170,13 @@ def run_bot():
                         "needs_full_translation": needs_more,
                         "is_public": True
                     })
+                    budget += 1
                 else:
+                    # שמירה גולמית אם ה-AI בחיסכון או תקול - למניעת פספוסים
                     items_to_publish.append({
                         "source_url": entry.link,
                         "titles": {"en": entry.title},
-                        "summaries": {"en": "AI Summary deferred for budget saving."},
+                        "summaries": {"en": "AI summary in progress..."},
                         "needs_full_translation": True,
                         "is_public": True
                     })
@@ -186,20 +187,16 @@ def run_bot():
     # --- DRIP FEEDING ---
     if items_to_publish:
         print(f"🕒 Scheduling {len(items_to_publish)} items over 28 minutes...")
-        
-        total_minutes = 28
-        interval = total_minutes / len(items_to_publish) if len(items_to_publish) > 1 else 0
+        interval = 28 / len(items_to_publish) if len(items_to_publish) > 1 else 0
         start_time = datetime.utcnow()
 
         for i, item in enumerate(items_to_publish):
             scheduled_time = start_time + timedelta(minutes=i * interval)
             item["created_at"] = scheduled_time.isoformat()
-            
             try:
                 supabase.table('news').insert(item).execute()
                 print(f"✅ Scheduled: {scheduled_time.strftime('%H:%M:%S')} | {list(item['titles'].values())[0][:30]}")
-            except Exception as e:
-                print(f"❌ DB Error: {e}")
+            except: pass
 
         update_ai_budget(len(items_to_publish))
     else:
