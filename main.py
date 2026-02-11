@@ -96,7 +96,7 @@ def update_ai_budget(count):
 
 def analyze_multilingual(item, budget):
     # המתנה קצרה למניעת חסימת RPM במסלול החינמי
-    time.sleep(8)
+    time.sleep(15)
     
     # מכסה של 1500 ליום מאפשרת לנו לעבוד בחופשיות יחסית
     if budget < 1400:
