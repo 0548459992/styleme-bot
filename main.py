@@ -8,7 +8,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 import random
 import requests
-import numpy as np
+import math # שימוש בספריה מובנית במקום numpy
 
 # --- הגדרות מערכת ---
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -23,18 +23,13 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
-# --- בנק המקורות הישירים ---
+# --- בנק המקורות הישירים (10 מקורות) ---
 DIRECT_FEEDS = [
-    "https://www.businessoffashion.com/feeds/rss/", 
-    "https://www.voguebusiness.com/feed",
-    "https://wwd.com/feed/", 
-    "https://www.fashionunited.com/rss-feed",
-    "https://www.textileworld.com/feed/", 
-    "https://www.fashionnetwork.com/rss/feed.xml",
-    "https://hypebeast.com/feed", 
-    "https://www.apparelresources.com/feed/",
-    "https://www.thefashionlaw.com/feed/", 
-    "https://www.ecotextile.com/news?format=feed&type=rss"
+    "https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed",
+    "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed",
+    "https://www.textileworld.com/feed/", "https://www.fashionnetwork.com/rss/feed.xml",
+    "https://hypebeast.com/feed", "https://www.apparelresources.com/feed/",
+    "https://www.thefashionlaw.com/feed/", "https://www.ecotextile.com/news?format=feed&type=rss"
 ]
 
 # --- בנק 110 הנושאים המלא (The Intelligence Bank) ---
@@ -79,6 +74,16 @@ ALL_TOPICS = [
     "Sustainable Fashion Awards 2026", "Sustainable Fashion Awards 2027", "Global Textile Machinery Expo"
 ]
 
+def cosine_similarity(v1, v2):
+    """חישוב דמיון ללא numpy"""
+    sumxx, sumyy, sumxy = 0, 0, 0
+    for i in range(len(v1)):
+        x = v1[i]; y = v2[i]
+        sumxx += x*x
+        sumyy += y*y
+        sumxy += x*y
+    return sumxy / math.sqrt(sumxx*sumyy)
+
 def get_ai_budget():
     try:
         res = supabase.table('ai_budget').select("*").eq('id', 1).single().execute()
@@ -105,8 +110,7 @@ def analyze_multilingual(item, budget):
     if budget >= 1450: return None, True
     target_langs = LANG_CODES if budget < 1000 else ["he", "en", "it", "fr", "zh", "tr"]
     needs_more = budget >= 1000
-
-    prompt = f"Analyze news and return JSON (titles/summaries in {target_langs}): {item.title}"
+    prompt = f"Analyze and return JSON (titles/summaries in {target_langs}): {item.title}"
     try:
         res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
         clean_json = res.text.strip().replace("```json", "").replace("```", "")
@@ -117,10 +121,9 @@ def run_bot():
     budget = get_ai_budget()
     print(f"🚀 StyleMe Smart Engine. Full Scan Mode. Budget: {budget}/1500")
     
-    # שליפת וקטורים למניעת כפילויות סמנטיות
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     recent_news = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
-    existing_embeddings = [np.array(item['embedding']) for item in recent_news.data if item['embedding']]
+    existing_embeddings = [item['embedding'] for item in recent_news.data if item['embedding']]
 
     items_to_publish = []
     selected_feeds = random.sample(DIRECT_FEEDS, min(6, len(DIRECT_FEEDS)))
@@ -131,23 +134,19 @@ def run_bot():
     for source, s_type in tasks:
         if len(items_to_publish) >= 15: break
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
-
         try:
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
             feed = feedparser.parse(resp.content)
             for entry in feed.entries:
                 if len(items_to_publish) >= 15: break
-                
                 existing = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if existing.data: continue
 
                 new_vector = get_embedding(entry.title)
-                if new_vector is not None:
-                    new_vector_np = np.array(new_vector)
+                if new_vector:
                     is_semantic_duplicate = False
                     for old_vector in existing_embeddings:
-                        similarity = np.dot(new_vector_np, old_vector) / (np.linalg.norm(new_vector_np) * np.linalg.norm(old_vector))
-                        if similarity > 0.88:
+                        if cosine_similarity(new_vector, old_vector) > 0.88:
                             is_semantic_duplicate = True
                             break
                     if is_semantic_duplicate: continue
@@ -159,7 +158,7 @@ def run_bot():
                         "category": ai_data.get('category', 'TRENDS'),
                         "titles": ai_data.get('titles', {"en": entry.title}),
                         "summaries": ai_data.get('summaries', {}),
-                        "embedding": new_vector.tolist() if new_vector is not None else None,
+                        "embedding": new_vector,
                         "needs_full_translation": needs_more,
                         "is_public": True
                     })
@@ -168,7 +167,7 @@ def run_bot():
                     items_to_publish.append({
                         "source_url": entry.link,
                         "titles": {"en": entry.title},
-                        "embedding": new_vector.tolist() if new_vector is not None else None,
+                        "embedding": new_vector,
                         "needs_full_translation": True,
                         "is_public": True
                     })
