@@ -16,7 +16,7 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 # עדכון שם המודל לגרסה נתמכת ויציבה
-MODEL_NAME = "gemini-1.5-flash-latest" 
+MODEL_NAME = "gemini-1.5-flash-002" 
 EMBEDDING_MODEL = "text-embedding-004"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
