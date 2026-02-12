@@ -15,7 +15,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-MODEL_NAME = "gemini-2.0-flash"
+# שימוש ב-1.5 פלאש ליציבות מקסימלית במסלול החינמי
+MODEL_NAME = "gemini-1.5-flash"
 EMBEDDING_MODEL = "text-embedding-004"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
@@ -23,7 +24,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
-# --- בנק המקורות והנושאים המלא (110 נושאים) ---
+# --- בנק 110 הנושאים המלא (The Intelligence Bank) ---
 DIRECT_FEEDS = [
     "https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed",
     "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed",
@@ -100,45 +101,39 @@ def update_ai_budget(count):
     except: pass
 
 def analyze_and_translate(item_title, budget):
-    """פונקציה ישירה לניתוח ותרגום לכל 20 השפות"""
+    """ניתוח ותרגום לכל 20 השפות עם מנגנון Retry לשגיאות 429"""
     time.sleep(15) 
     if budget >= 1450: return None
     
-    prompt = f"""
-    Analyze this fashion news: {item_title}
-    1. Category: TRENDS, MARKET, TECH, LOGISTICS, or REGULATION.
-    2. Professional 2-sentence summary and title translated to ALL these codes: {LANG_CODES}.
-    Return ONLY valid JSON:
-    {{
-      "category": "...",
-      "titles": {{"he": "...", "en": "...", ...}},
-      "summaries": {{"he": "...", "en": "...", ...}}
-    }}
-    """
-    try:
-        print(f"📡 Sending to AI: {item_title[:30]}...")
-        res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
-        text = res.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(text)
-    except Exception as e:
-        print(f"❌ AI Error: {e}")
-        return None
+    prompt = f"Analyze news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
+    
+    for attempt in range(2):
+        try:
+            print(f"📡 Sending to AI (Attempt {attempt+1}): {item_title[:30]}...")
+            res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
+            text = res.text.strip().replace("```json", "").replace("```", "")
+            return json.loads(text)
+        except Exception as e:
+            if "429" in str(e):
+                print(f"⏳ Quota hit, waiting 30s before retry...")
+                time.sleep(30)
+                continue
+            print(f"❌ AI Error: {e}")
+            return None
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Pro Engine. Mode: Intelligence Broad Scan. Budget: {budget}/1500")
+    print(f"🚀 StyleMe Stable Engine. Budget: {budget}/1500")
 
-    # --- שלב 1: השלמת פערים (Catch-up) פריט אחד בכל פעם ליציבות ---
+    # --- שלב 1: השלמת פערים (Catch-up) ---
     try:
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
         if pending.data:
             item = pending.data[0]
             t_obj = item.get('titles', {})
             title = next(iter(t_obj.values())) if t_obj else "Fashion Update"
-            
-            print(f"🔄 Catching up: {title[:30]}...")
+            print(f"🔄 Catching up: {title[:30]}")
             ai_data = analyze_and_translate(title, budget)
-            
             if ai_data:
                 supabase.table('news').update({
                     "category": ai_data.get('category'),
@@ -147,11 +142,11 @@ def run_bot():
                     "needs_full_translation": False
                 }).eq('id', item['id']).execute()
                 update_ai_budget(1)
-                print(f"✅ Updated pending item successfully.")
+                print(f"✅ Updated pending item.")
     except Exception as e:
         print(f"Catch-up Error: {e}")
 
-    # --- שלב 2: סריקה חדשה (110 נושאים + RSS) ---
+    # --- שלב 2: סריקה חדשה (110 נושאים) ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     try:
         recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
@@ -165,25 +160,19 @@ def run_bot():
     for source, s_type in tasks:
         if len(items_to_publish) >= 15: break
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
-        
         try:
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
             feed = feedparser.parse(resp.content)
-            
             for entry in feed.entries:
                 if len(items_to_publish) >= 15: break
-                
-                # כפילות URL
                 if supabase.table('news').select("id").eq('source_url', entry.link).execute().data: continue
 
-                # Embedding & Similarity
                 try:
                     res_emb = client_ai.models.embed_content(model=EMBEDDING_MODEL, contents=entry.title)
                     new_vec = res_emb.embeddings[0].values
                     if any(cosine_similarity(new_vec, old) > 0.88 for old in existing_embs): continue
                 except: new_vec = None
 
-                # AI Analysis
                 ai_data = analyze_and_translate(entry.title, budget)
                 if ai_data:
                     items_to_publish.append({
@@ -193,21 +182,18 @@ def run_bot():
                     })
                     budget += 1
                 else:
-                    # שמירה גולמית אם ה-AI נכשל
                     items_to_publish.append({
                         "source_url": entry.link, "titles": {"en": entry.title},
                         "embedding": new_vec, "needs_full_translation": True, "is_public": True
                     })
         except: continue
 
-    # Drip Feed Publishing
     if items_to_publish:
         interval = 28 / len(items_to_publish)
         start_time = datetime.utcnow()
         for i, item in enumerate(items_to_publish):
             item["created_at"] = (start_time + timedelta(minutes=i * interval)).isoformat()
-            try:
-                supabase.table('news').insert(item).execute()
+            try: supabase.table('news').insert(item).execute()
             except: pass
         update_ai_budget(len(items_to_publish))
 
