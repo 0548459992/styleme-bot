@@ -41,46 +41,32 @@ DIRECT_FEEDS = [
 ]
 
 ALL_TOPICS = [
-    "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026",
-    "Sustainable Couture Techniques", "Bespoke Tailoring Industry News", "Womenswear Silhouette Innovation",
-    "Footwear Sculpture & Design", "Knitwear Structure Innovation", "Luxury Bridal Market Trends",
-    "Experimental Accessories Design", "Streetwear Subculture Research", "Vintage & Archival Fashion Market",
-    "Costume Design & Cinema Art", "Fashion Illustration Modern Masters", "Emerging Designers Global Talent",
-    "Textile Pattern Design Trends", "Gender-Neutral Fashion Design", "Artisanal Embroidery Techniques",
-    "Deconstruction in Fashion Design", "Modest Fashion Global Trends", "Resort Wear Design Innovation",
-    "Smart Fabrics & Electronic Textiles", "Biodegradable Synthetic Fibers", "Recycled Ocean Plastic Textiles",
-    "Spider Silk Bio-Engineering", "Mycelium & Mushroom Leather", "High-Performance Sportswear Fabrics",
-    "Carbon Fiber Apparel Applications", "Nanotechnology in Textile Finishing", "Waterless Dyeing Technology",
-    "Denim Indigo Weaving Innovations", "Merino Wool Sustainability Trends", "Cashmere Supply Chain Ethics",
-    "Digital Inkjet Textile Printing", "Non-woven Medical Textiles", "Aerospace Grade Technical Fabrics",
-    "Cotton Genetic Modification News", "Industrial Hemp Fiber Processing", "Antibacterial Fabric Innovation",
-    "Fire-Retardant Textile Research", "Phase Change Materials in Clothing", "3D Weaving Technology News",
-    "Bio-based Polymers for Fashion", "Textile Waste Upcycling Tech", "Generative AI in Apparel Design",
-    "3D Body Modeling & Fit Tech", "Virtual Try-On UX Innovation", "Metaverse Luxury Collections",
-    "Blockchain for Luxury Authentication", "NFT Fashion Assets Regulation", "Robotic Sewing & Assembly Lines",
-    "Digital Product Passports Textiles", "Big Data in Fashion Retail", "AR-Powered Retail Experiences",
-    "Artificial Intelligence Style Curators", "Fashion E-commerce Algorithm Trends", "Livestream Shopping Tech Global",
-    "Interactive Garment QR Codes", "Smart Warehouse Logistics Fashion", "Automated Textile Quality Control",
-    "Predictive Analytics for Fashion Trends", "Global Fashion Retail Growth 2026", "Luxury Sector Financial Outlook",
-    "Apparel Supply Chain Resilience", "Raw Material Price Volatility", "Logistics Shipping Port Delay",
-    "Air Freight Trends for Fashion", "Resale & Circular Economy Growth", "Clothing Rental Subscription Models",
-    "Direct-to-Consumer Strategy News", "Department Store Revival Strategies", "Luxury Market in Southeast Asia",
-    "Emerging Textile Hubs Ethiopia", "Post-Fast Fashion Business Models", "Merchandising Planning AI Software",
-    "Impact of Inflation on Fashion", "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth",
-    "Turkey Apparel Manufacturing News", "Global Cotton Stock Index", "EU EPR Legislation for Textiles",
-    "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones", "Fair Trade Labor Standards News",
-    "Microplastic Filtration Solutions", "Supply Chain Traceability Software", "B-Corp Certified Fashion Brands",
-    "Anti-Greenwashing Marketing Laws", "Regenerative Cotton Farming News", "Animal Welfare in Fashion Industry",
-    "Zero-Waste Pattern Making Tech", "Chemical Safety in Textile Dyeing", "Fashion Intellectual Property Law",
-    "Copyright Protection for Designs", "Counterfeit Detection Technology", "Garment Worker Minimum Wage News",
-    "Textile Recycling Infrastructure EU", "Global Fashion Week Highlights", "Textile Innovation Trade Shows",
-    "Museum Costume Exhibitions", "Fashion History Research News", "Iconic Designer Retrospectives",
-    "Subculture Influence on High Fashion", "Ethno-Fashion Design Preservation", "Fashion Photography New Trends",
-    "Luxury Hospitality & Fashion Collabs", "Sustainable Fashion Awards 2026", "Global Textile Machinery Expo"
+    "Avant-Garde Fashion Design Trends", "Sustainable Couture Techniques", 
+    "Runway Color Forecast 2026", "Womenswear Silhouette Innovation",
+    "Footwear Sculpture & Design", "Luxury Bridal Market Trends",
+    "Experimental Accessories Design", "Streetwear Subculture Research",
+    "Textile Pattern Design Trends", "Gender-Neutral Fashion Design",
+    "Smart Fabrics & Electronic Textiles", "Biodegradable Synthetic Fibers",
+    "Recycled Ocean Plastic Textiles", "Mycelium & Mushroom Leather",
+    "Carbon Fiber Apparel Applications", "Waterless Dyeing Technology",
+    "Denim Indigo Weaving Innovations", "Digital Inkjet Textile Printing",
+    "Generative AI in Apparel Design", "3D Body Modeling & Fit Tech",
+    "Virtual Try-On UX Innovation", "Metaverse Luxury Collections",
+    "Blockchain for Luxury Authentication", "NFT Fashion Assets Regulation",
+    "Digital Product Passports Textiles", "Big Data in Fashion Retail",
+    "Artificial Intelligence Style Curators", "Fashion E-commerce Algorithm Trends",
+    "Predictive Analytics for Fashion Trends", "Global Fashion Retail Growth 2026",
+    "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
+    "Resale & Circular Economy Growth", "Clothing Rental Subscription Models",
+    "Direct-to-Consumer Strategy News", "Luxury Market in Southeast Asia",
+    "Post-Fast Fashion Business Models", "EU EPR Legislation for Textiles",
+    "Fashion Carbon Footprint Metrics", "Regenerative Cotton Farming News",
+    "Zero-Waste Pattern Making Tech", "Fashion Intellectual Property Law",
+    "Global Fashion Week Highlights", "Iconic Designer Retrospectives"
 ]
 
 def extract_json_smart(text):
-    """מחלץ JSON נקי"""
+    """מחלץ JSON נקי ומסנן רעשי רקע"""
     try:
         return json.loads(text)
     except:
@@ -92,22 +78,21 @@ def extract_json_smart(text):
             return None
         except: return None
 
-def analyze_with_flash(item_title):
-    """ניתוח איטי ובטוח"""
+def analyze_turtle_mode(item_title):
+    """ניתוח במצב צב - איטי ובטוח"""
     prompt = f"""
     Act as a Fashion Editor. Analyze this news title: "{item_title}".
     Return a JSON object ONLY with:
     1. "category": One specific fashion category.
     2. "titles": Translated title in {LANG_CODES}.
     3. "summaries": A 2-sentence summary in {LANG_CODES}.
-    NO markdown. NO thinking text. Just JSON.
+    Return JSON only.
     """
     
-    # משתמשים רק במודל אחד שעובד, בזהירות
     model = "gemini-2.0-flash"
     
     try:
-        print(f"⚡ Analyzing...")
+        print(f"🐢 Analyzing (Slowly)...")
         response = client_ai.models.generate_content(
             model=model,
             contents=prompt,
@@ -116,21 +101,12 @@ def analyze_with_flash(item_title):
         return extract_json_smart(response.text)
             
     except Exception as e:
-        # אם יש שגיאת עומס (429), נחכה וננסה שוב פעם אחת
-        if "429" in str(e):
-            print("⏳ Quota full. Cooling down for 30s...")
-            time.sleep(30)
-            try:
-                print("🔄 Retrying...")
-                response = client_ai.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type="application/json")
-                )
-                return extract_json_smart(response.text)
-            except:
-                print("❌ Retry failed. Skipping.")
-                return None
+        # טיפול בשגיאות עומס
+        err_msg = str(e).lower()
+        if "429" in err_msg or "quota" in err_msg:
+            print("🛑 Quota hit! Sleeping 120s (2 mins)...")
+            time.sleep(120) 
+            return None # מוותרים הפעם, ננסה בריצה הבאה
         else:
             print(f"⚠️ Error: {e}")
             return None
@@ -139,29 +115,33 @@ def run_archive_and_cleanup():
     print("🧹 Maintenance...")
     try:
         now = datetime.utcnow()
-        limit = (now - timedelta(days=2)).isoformat()
+        # מחיקת טיוטות ישנות
+        limit = (now - timedelta(hours=12)).isoformat()
         supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit).execute()
     except: pass
 
 def run_bot():
-    print(f"🚀 StyleMe Pro Engine Active - Slow Mode")
+    print(f"🚀 StyleMe TURTLE Engine Active 🐢")
     run_archive_and_cleanup()
 
     tasks = []
-    # לוקחים פחות משימות כדי לא להעמיס
-    rss_samples = random.sample(DIRECT_FEEDS, 4) 
+    # לוקחים דגימות קטנות מאוד
+    rss_samples = random.sample(DIRECT_FEEDS, 3) 
     for f in rss_samples: tasks.append((f, "RSS"))
         
-    topic_samples = random.sample(ALL_TOPICS, 5)
+    topic_samples = random.sample(ALL_TOPICS, 3)
     for t in topic_samples: tasks.append((t, "TOPIC"))
         
     random.shuffle(tasks)
+    
+    # --- המגבלה הקריטית ---
+    # רק 3 כתבות לכל הפעלה של הבוט!
+    MAX_ARTICLES_PER_RUN = 3
     items_published = 0
 
     for source, s_type in tasks:
-        # מגבלה קשיחה - מקסימום 5 כתבות בריצה אחת
-        if items_published >= 5: 
-            print("🛑 Daily batch limit reached.")
+        if items_published >= MAX_ARTICLES_PER_RUN: 
+            print("🛑 Batch limit reached. Bye!")
             break 
         
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
@@ -171,15 +151,16 @@ def run_bot():
             resp = requests.get(url, timeout=10)
             feed = feedparser.parse(resp.content)
             
+            # רק כתבה אחת ממקור זה
             for entry in feed.entries[:1]:
-                if items_published >= 5: break
+                if items_published >= MAX_ARTICLES_PER_RUN: break
                 
                 exists = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if exists.data:
                     print("🔹 Exists.")
                     continue
 
-                ai_data = analyze_with_flash(entry.title)
+                ai_data = analyze_turtle_mode(entry.title)
                 
                 if ai_data:
                     item = {
@@ -195,12 +176,11 @@ def run_bot():
                     print(f"✅ Published: {entry.title[:20]}...")
                     items_published += 1
                     
-                    # --- התיקון הגדול ---
-                    # הפסקה של 30 שניות בין כל כתבה לכתבה!
-                    # זה מה שימנע את שגיאת ה-429
-                    print("💤 Resting for 30s to respect Google Quota...")
-                    time.sleep(30) 
-                    
+                    # --- ההפסקה הגדולה ---
+                    # דקה שלמה של מנוחה בין הצלחות
+                    print("💤 Cooling down for 60s...")
+                    time.sleep(60) 
+                
         except Exception:
             continue
 
