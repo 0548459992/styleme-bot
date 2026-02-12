@@ -92,7 +92,6 @@ def get_live_models():
         return []
 
 def analyze_dynamic_with_protection(item_title, model_list):
-    """Analysis with immediate stop if Google is overloaded"""
     prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
     for model_name in model_list[:3]:
@@ -100,15 +99,19 @@ def analyze_dynamic_with_protection(item_title, model_list):
             print(f"📡 Requesting {model_name}...")
             res = client_ai.models.generate_content(model=model_name, contents=prompt)
             if res.text:
-                text = res.text.strip().replace("```json", "").replace("```", "")
-                return json.loads(text)
+                return json.loads(res.text.strip().replace("```json", "").replace("```", ""))
         except Exception as e:
             err_str = str(e).upper()
-            if any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
-                print(f"🛑 Google API Overload ({model_name}). Stopping run to prevent lockout.")
-                sys.exit(0) 
-            print(f"❌ Minor Error with {model_name}: {e}")
-    return None
+            # אם המודל הספציפי עמוס, נחכה קצת וננסה את המודל הבא ברשימה (משפחה אחרת)
+            if any(x in err_str for x in ["429", "503", "UNAVAILABLE"]):
+                print(f"⚠️ {model_name} overloaded. Waiting 15s for next family...")
+                time.sleep(15)
+                continue # עובר למודל הבא במקום sys.exit
+            print(f"❌ Error with {model_name}: {e}")
+    
+    # רק אם עברנו על כל 3 המשפחות וכולן חסומות - אז עוצרים
+    print("🛑 All available families are overloaded. Stopping run.")
+    sys.exit(0)
 
 def run_archive_and_cleanup():
     print("🧹 Running Maintenance...")
