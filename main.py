@@ -2,7 +2,7 @@ import os
 import time
 import feedparser
 from google import genai
-from google.genai import types # ייבוא חשוב להגדרות JSON
+from google.genai import types
 import json
 from supabase import create_client
 import urllib.parse
@@ -67,41 +67,45 @@ ALL_TOPICS = [
 DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml"]
 
 def get_live_models():
-    """Discovering models, prioritizing Flash for speed and stability"""
+    """Discover all available models dynamically without hardcoding names"""
     try:
+        # שליפת כל המודלים שתומכים בטקסט
         raw_list = [m.name for m in client_ai.models.list() 
                     if "generateContent" in m.supported_actions 
                     and "gemini" in m.name 
                     and not any(x in m.name for x in ["vision", "image", "robotics", "er-1.5"])]
         
+        # סינון כפילויות משפחה (למשל אם יש 5 גרסאות של אותו מודל)
         unique_families = {}
         for m in raw_list:
             parts = m.split('-')
+            # יצירת מפתח משפחה גנרי
             family_key = "-".join(parts[:3]) if len(parts) > 2 else m
             if family_key not in unique_families:
                 unique_families[family_key] = m
         
         final_list = list(unique_families.values())
-        # השינוי הגדול: מיון שנותן עדיפות ל-Flash על פני Pro
-        # זה ימנע את השגיאות שראית בלוג שבו הוא מנסה את Pro הכבד ונכשל
-        final_list.sort(key=lambda x: ("flash" in x, "2.0" in x, "1.5" in x), reverse=True)
         
-        print(f"🤖 Prioritized Model Families: {final_list[:5]}")
+        # מיון: נותנים עדיפות למודלים עם המילה 'flash' בשם (כי הם מהירים וזולים)
+        # זה לא הארד-קודינג של שם, אלא העדפה של 'סוג' מודל
+        final_list.sort(key=lambda x: "flash" in x.lower(), reverse=True)
+        
+        print(f"🤖 Dynamically Discovered Models: {final_list}")
         return final_list
-    except: return ["models/gemini-1.5-flash", "models/gemini-2.0-flash"]
+    except: return []
 
 def analyze_dynamic_with_protection(item_title, model_list):
-    """Analysis using JSON enforcement to prevent parsing errors"""
+    """Iterate through discovered models until one works"""
+    if not model_list: return None
+
     prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
-    
-    # הגדרת תצורה שמחייבת את המודל להחזיר JSON תקין
-    # זה יפתור את שגיאות ה-Expecting value / delimiter
     json_config = types.GenerateContentConfig(response_mime_type="application/json")
     
-    for model_name in model_list[:3]:
+    # מנסים את המודלים ברשימה אחד אחד
+    # הגדלתי את הסריקה ל-5 מודלים שונים כדי להבטיח שאחד יתפוס
+    for model_name in model_list[:5]:
         try:
-            print(f"📡 Requesting {model_name}...")
-            # שימוש ב-config החדש
+            print(f"📡 Testing dynamic model: {model_name}...")
             res = client_ai.models.generate_content(
                 model=model_name, 
                 contents=prompt,
@@ -109,7 +113,6 @@ def analyze_dynamic_with_protection(item_title, model_list):
             )
             
             if res.text:
-                # ניקוי מינימלי למקרה הצורך, למרות שה-config אמור לסדר את זה
                 text = res.text.strip()
                 if text.startswith("```json"): text = text[7:]
                 if text.endswith("```"): text = text[:-3]
@@ -117,53 +120,62 @@ def analyze_dynamic_with_protection(item_title, model_list):
                 
         except Exception as e:
             err_str = str(e).upper()
+            # זיהוי עומס
             if any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
-                print(f"⚠️ {model_name} overloaded. Waiting 5s for next family...")
-                time.sleep(5)
+                print(f"⚠️ {model_name} is overloaded. Waiting 20s before trying next model...")
+                time.sleep(20) # המתנה משמעותית כדי לתת ל-API לנשום
                 continue
             
-            # אם זו שגיאת JSON, נדלג למודל הבא
-            if "JSON" in err_str or "EXPECTING" in err_str:
-                print(f"❌ JSON Error with {model_name}. Retrying with next model...")
-                continue
-                
-            print(f"❌ Minor Error with {model_name}: {e}")
+            # זיהוי שגיאות אחרות (כמו מודל שלא תומך ב-JSON)
+            print(f"❌ Error with {model_name}: {e}. Moving to next...")
+            continue
 
-    print("🛑 All available models failed for this item.")
-    return None
+    print("🛑 All discovered models failed to process this item.")
+    return None # לא עוצרים את כל הבוט, רק מדלגים על הכתבה הזו
 
 def run_archive_and_cleanup():
     print("🧹 Running Maintenance...")
     now = datetime.utcnow()
     try:
-        supabase.table('news').delete().gte('missing_reports', 3).execute() # עודכן ל-3 לפי בקשתך
+        supabase.table('news').delete().gte('missing_reports', 3).execute()
         one_year_ago = (now - timedelta(days=365)).isoformat()
         supabase.table('news').delete().lt('created_at', one_year_ago).execute()
         limit_24h = (now - timedelta(days=1)).isoformat()
         supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_24h).execute()
-    except Exception as e: print(f"Maintenance warning: {e}")
+    except: pass
 
 def run_bot():
     print(f"🚀 StyleMe Pro Engine Active.")
     run_archive_and_cleanup()
     live_models = get_live_models()
 
+    if not live_models:
+        print("❌ Critical: No models found from Google API.")
+        return
+
     # --- Step 1: Catch-up ---
     try:
+        # שליפת הכתבה הממתינה
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
-        if pending.data:
-            item = pending.data[0]
+        
+        # --- התיקון הקריטי כאן ---
+        # וידוא שחזרו נתונים לפני שמנסים לגשת אליהם
+        if pending.data and len(pending.data) > 0:
+            item = pending.data[0] # גישה לאיבר הראשון ברשימה
             retry_count = item.get('retry_count', 0)
             
-            if retry_count > 3:
-                print(f"🗑️ Deleting stuck article after {retry_count} retries.")
+            if retry_count > 4: # העלאת סף הניסיונות ל-4
+                print(f"🗑️ Deleting stuck article ID: {item['id']}")
                 supabase.table('news').delete().eq('id', item['id']).execute()
             else:
-                title_obj = item.get('titles', {})
-                title = next(iter(title_obj.values())) if title_obj else "Update"
-                print(f"🔄 Catching up (Attempt {retry_count + 1}): {title[:30]}")
+                titles = item.get('titles')
+                # הגנה למקרה שאין כותרת
+                title = list(titles.values())[0] if titles else "News Update"
+                
+                print(f"🔄 Catching up (Attempt {retry_count + 1}): {title[:30]}...")
                 
                 ai_data = analyze_dynamic_with_protection(title, live_models)
+                
                 if ai_data:
                     supabase.table('news').update({
                         "category": ai_data.get('category'), "titles": ai_data.get('titles'),
@@ -172,8 +184,9 @@ def run_bot():
                     }).eq('id', item['id']).execute()
                     print("✅ Catch-up complete.")
                 else:
+                    # עדכון מונה כישלונות
                     supabase.table('news').update({"retry_count": retry_count + 1}).eq('id', item['id']).execute()
-    except Exception as e: print(f"Catch-up Err: {e}")
+    except Exception as e: print(f"Catch-up Loop Error: {e}")
 
     # --- Step 2: New Scan ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
