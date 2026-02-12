@@ -1,4 +1,4 @@
-name: StyleMe UV Fast
+name: StyleMe Surgical Fix
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 5 # הגנה מתקיעות
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Code
@@ -17,19 +17,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10' 
+          cache: 'pip'
 
-      # שלב 1: התקנת הכלי המהיר uv
-      - name: Install uv (The Magic Tool)
-        run: pip install uv
-
-      # שלב 2: התקנת הספריות בעזרת uv (מהיר פי 100)
-      - name: Install Libraries with uv
+      - name: Install Build Tools (The Fixer)
         run: |
-          # uv פותר את הבעיות ש-pip נתקע בהן
-          uv pip install --system google-genai feedparser sgmllib3k supabase requests
+          # שלב קריטי: עדכון כלים שמונעים תקיעות בהתקנה
+          python -m pip install --upgrade pip setuptools wheel
 
-      # שלב 3: הרצת הבוט
+      - name: Install Problematic Library First
+        run: |
+          # אנחנו מתקינים את הרכיב הבעייתי לבד כדי ש-feedparser לא יחפש אותו ויתקע
+          pip install sgmllib3k
+
+      - name: Install Rest of Libraries
+        run: |
+          # עכשיו מתקינים את השאר. בגלל ש-sgmllib3k כבר קיים, זה יעבור חלק
+          pip install feedparser google-genai supabase requests
+
       - name: Run Bot
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
