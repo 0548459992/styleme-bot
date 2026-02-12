@@ -23,14 +23,8 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
-# --- בנק המקורות והנושאים (110 נושאים) ---
-DIRECT_FEEDS = [
-    "https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed",
-    "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed",
-    "https://www.textileworld.com/feed/", "https://www.fashionnetwork.com/rss/feed.xml",
-    "https://hypebeast.com/feed", "https://www.apparelresources.com/feed/",
-    "https://www.thefashionlaw.com/feed/", "https://www.ecotextile.com/news?format=feed&type=rss"
-]
+# --- בנק המקורות והנושאים המלא (110 נושאים) ---
+DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml", "https://hypebeast.com/feed", "https://www.apparelresources.com/feed/", "https://www.thefashionlaw.com/feed/", "https://www.ecotextile.com/news?format=feed&type=rss"]
 
 ALL_TOPICS = [
     "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026", "Runway Color Forecast 2027",
@@ -95,59 +89,49 @@ def update_ai_budget(count):
     current = get_ai_budget()
     supabase.table('ai_budget').update({"requests_today": current + count}).eq('id', 1).execute()
 
-def get_embedding(text):
-    try:
-        res = client_ai.models.embed_content(model=EMBEDDING_MODEL, contents=text)
-        return res.embeddings[0].values
-    except: return None
-
 def analyze_multilingual(item_title, budget):
     time.sleep(15)
     if budget >= 1450: return None, True
-    target_langs = LANG_CODES if budget < 1000 else ["he", "en", "it", "fr", "zh", "tr"]
-    needs_more = budget >= 1000
-    prompt = f"Analyze fashion news and return JSON (titles/summaries in {target_langs}): {item_title}"
+    # שומרים על כל 20 השפות בכל מקרה
+    prompt = f"Analyze fashion news and return JSON (titles/summaries in ALL {LANG_CODES}): {item_title}"
     try:
         res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
         clean_json = res.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(clean_json), needs_more
+        return json.loads(clean_json), False
     except: return None, True
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Smart Engine. Budget: {budget}/1500")
+    print(f"🚀 StyleMe Smart Engine. Full Intelligence Mode. Budget: {budget}/1500")
 
-    # --- שלב 1: השלמת פערים (Catch-up Mode) ---
-    pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(3).execute()
+    # --- שלב 1: השלמת פערים (Catch-up) - פריט אחד בכל פעם ליציבות ---
+    pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
     if pending.data:
-        print(f"🔄 Processing {len(pending.data)} pending items...")
-        for item in pending.data:
-            if budget >= 1450: break
-            
-            # שליפת כותרת בטוחה מתוך אובייקט ה-JSON
-            title_obj = item.get('titles', {})
-            title_to_analyze = next(iter(title_obj.values())) if title_obj else "Unknown Title"
-            
-            print(f"🧐 Analyzing pending: {title_to_analyze[:30]}...")
-            ai_data, needs_more = analyze_multilingual(title_to_analyze, budget)
-            
-            if ai_data:
-                supabase.table('news').update({
-                    "category": ai_data.get('category'),
-                    "titles": ai_data.get('titles'),
-                    "summaries": ai_data.get('summaries'),
-                    "needs_full_translation": needs_more
-                }).eq('id', item['id']).execute()
-                budget += 1
-                update_ai_budget(1)
-                print(f"✅ Successfully updated: {item['id']}")
+        item = pending.data[0]
+        title_obj = item.get('titles', {})
+        title_to_analyze = next(iter(title_obj.values())) if title_obj else "Unknown Title"
+        
+        print(f"🔄 Processing pending item: {title_to_analyze[:30]}...")
+        ai_data, needs_more = analyze_multilingual(title_to_analyze, budget)
+        
+        if ai_data:
+            supabase.table('news').update({
+                "category": ai_data.get('category'),
+                "titles": ai_data.get('titles'),
+                "summaries": ai_data.get('summaries'),
+                "needs_full_translation": False
+            }).eq('id', item['id']).execute()
+            budget += 1
+            update_ai_budget(1)
+            print(f"✅ Successfully updated pending item.")
 
-    # --- שלב 2: סריקה חדשה ---
+    # --- שלב 2: סריקה חדשה (כל 110 הנושאים) ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
     existing_embs = [item['embedding'] for item in recent.data if item['embedding']]
 
     items_to_publish = []
+    # הגרלת משימות מתוך הבנק המלא
     tasks = [(f, "RSS") for f in random.sample(DIRECT_FEEDS, 6)] + [(t, "TOPIC") for t in random.sample(ALL_TOPICS, 15)]
     random.shuffle(tasks)
 
@@ -161,15 +145,19 @@ def run_bot():
                 if len(items_to_publish) >= 15: break
                 if supabase.table('news').select("id").eq('source_url', entry.link).execute().data: continue
 
-                new_vec = get_embedding(entry.title)
-                if new_vec and any(cosine_similarity(new_vec, old) > 0.88 for old in existing_embs): continue
+                # בדיקת דמיון סמנטי
+                try:
+                    res_emb = client_ai.models.embed_content(model=EMBEDDING_MODEL, contents=entry.title)
+                    new_vec = res_emb.embeddings[0].values
+                    if any(cosine_similarity(new_vec, old) > 0.88 for old in existing_embs): continue
+                except: new_vec = None
 
                 ai_data, needs_more = analyze_multilingual(entry.title, budget)
                 if ai_data:
                     items_to_publish.append({
                         "source_url": entry.link, "category": ai_data.get('category', 'TRENDS'),
                         "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
-                        "embedding": new_vec, "needs_full_translation": needs_more, "is_public": True
+                        "embedding": new_vec, "needs_full_translation": False, "is_public": True
                     })
                     budget += 1
                 else:
