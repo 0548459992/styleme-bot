@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import random
 import requests
 import math 
+import sys # הוספת ספריה ליציאה נקייה מהסקריפט
 
 # --- הגדרות מערכת ---
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -75,14 +76,13 @@ def cosine_similarity(v1, v2):
     except: return 0
 
 def get_live_models():
-    """גילוי דינמי של מודלים מורשים עם סינון מודלים לא רלוונטיים ומניעת כפילויות משפחה"""
+    """Discovering one representative per family to avoid loop-quota errors"""
     try:
         raw_list = [m.name for m in client_ai.models.list() 
                     if "generateContent" in m.supported_actions 
                     and "gemini" in m.name 
                     and not any(x in m.name for x in ["vision", "image", "robotics", "er-1.5"])]
         
-        # סינון לנציג אחד מכל משפחה למניעת לופים של 429
         unique_families = {}
         for m in raw_list:
             parts = m.split('-')
@@ -92,16 +92,13 @@ def get_live_models():
         
         final_list = list(unique_families.values())
         final_list.sort(key=lambda x: ("2.0" in x, "flash" in x), reverse=True)
-        print(f"🤖 Dynamically approved families: {final_list[:5]}")
         return final_list
     except: return ["models/gemini-2.0-flash", "models/gemini-1.5-flash"]
 
 def analyze_dynamic_with_protection(item_title, model_list):
-    """ניתוח AI עם הגנת עומס ודילוג בין משפחות מודלים"""
-    time.sleep(15) 
+    """Analysis with immediate stop if Google is overloaded"""
     prompt = f"Analyze news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
-    # ניסיון של עד 3 משפחות שונות בלבד
     for model_name in model_list[:3]:
         try:
             print(f"📡 Requesting {model_name}...")
@@ -110,27 +107,26 @@ def analyze_dynamic_with_protection(item_title, model_list):
                 text = res.text.strip().replace("```json", "").replace("```", "")
                 return json.loads(text)
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print(f"⚠️ {model_name} quota hit. Waiting 10s and skipping family...")
-                time.sleep(10)
-                continue
-            print(f"❌ {model_name} Error: {e}")
+            err_str = str(e).upper()
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+                print(f"🛑 Google API Overload ({model_name}). Stopping run to prevent lockout.")
+                sys.exit(0) # יציאה נקייה מהסקריפט - ננסה שוב בריצה הבאה של ה-GitHub Actions
+            print(f"❌ Minor Error with {model_name}: {e}")
     return None
 
 def run_archive_and_cleanup():
-    """תחזוקת ארכיון: מחיקת שבורים (חוכמת המונים) וניקוי זבל"""
     print("🧹 Running Maintenance...")
     now = datetime.utcnow()
     try:
-        # 1. מחיקת כתבות שדווחו כחסרות ע"י 2 משתמשים
+        # Cleanup broken links reported by users
         supabase.table('news').delete().gte('missing_reports', 2).execute()
-        # 2. מחיקת טיוטות שעברו 48 שעות
+        # Cleanup old untranslated drafts
         limit_48h = (now - timedelta(days=2)).isoformat()
         supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_48h).execute()
     except: pass
 
 def run_bot():
-    print(f"🚀 StyleMe Autonomous Engine. Broad Scan Mode.")
+    print(f"🚀 StyleMe Pro Engine. Intelligence Broad Scan.")
     run_archive_and_cleanup()
     live_models = get_live_models()
 
@@ -148,6 +144,7 @@ def run_bot():
                     "category": ai_data.get('category'), "titles": ai_data.get('titles'),
                     "summaries": ai_data.get('summaries'), "needs_full_translation": False
                 }).eq('id', item['id']).execute()
+                print("✅ Catch-up complete.")
     except Exception as e: print(f"Catch-up Err: {e}")
 
     # --- Step 2: New Scan ---
@@ -177,12 +174,14 @@ def run_bot():
                     items_to_publish.append({
                         "source_url": entry.link, "category": ai_data.get('category'),
                         "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
-                        "needs_full_translation": False, "is_public": True, "missing_reports": 0
+                        "embedding": None, "needs_full_translation": False, "is_public": True,
+                        "missing_reports": 0
                     })
                 else:
                     items_to_publish.append({
                         "source_url": entry.link, "titles": {"en": entry.title},
-                        "needs_full_translation": True, "is_public": True, "missing_reports": 0
+                        "embedding": None, "needs_full_translation": True, "is_public": True,
+                        "missing_reports": 0
                     })
         except: continue
 
