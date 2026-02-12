@@ -80,111 +80,105 @@ ALL_TOPICS = [
 ]
 
 def extract_json_smart(text):
-    """מחלץ JSON נקי גם אם המודל הוסיף מחשבות או טקסט נוסף"""
+    """מחלץ JSON נקי"""
     try:
-        # ניסיון ראשון: פענוח ישיר
         return json.loads(text)
     except:
         try:
-            # ניסיון שני: חיפוש הסוגריים המסולסלים החיצוניים
             start = text.find('{')
             end = text.rfind('}') + 1
             if start != -1 and end != -1:
-                clean_text = text[start:end]
-                return json.loads(clean_text)
+                return json.loads(text[start:end])
             return None
-        except:
-            return None
+        except: return None
 
 def analyze_with_flash(item_title):
-    """ניתוח מהיר עם המודל היציב ביותר"""
+    """ניתוח איטי ובטוח"""
     prompt = f"""
     Act as a Fashion Editor. Analyze this news title: "{item_title}".
     Return a JSON object ONLY with:
-    1. "category": One specific fashion category (e.g., "Textile Innovation", "Luxury Business").
+    1. "category": One specific fashion category.
     2. "titles": Translated title in {LANG_CODES}.
     3. "summaries": A 2-sentence summary in {LANG_CODES}.
-    
-    IMPORTANT: Return ONLY the JSON. Do not include markdown code blocks.
+    NO markdown. NO thinking text. Just JSON.
     """
     
-    # שימוש ברשימת מודלים קשיחה ויציבה
-    models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    # משתמשים רק במודל אחד שעובד, בזהירות
+    model = "gemini-2.0-flash"
     
-    for model in models_to_try:
-        try:
-            print(f"⚡ Analyzing with {model}...")
-            response = client_ai.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
+    try:
+        print(f"⚡ Analyzing...")
+        response = client_ai.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        return extract_json_smart(response.text)
             
-            data = extract_json_smart(response.text)
-            if data:
-                return data
-                
-        except Exception as e:
-            print(f"⚠️ Model {model} error: {e}")
-            continue
-            
-    return None
+    except Exception as e:
+        # אם יש שגיאת עומס (429), נחכה וננסה שוב פעם אחת
+        if "429" in str(e):
+            print("⏳ Quota full. Cooling down for 30s...")
+            time.sleep(30)
+            try:
+                print("🔄 Retrying...")
+                response = client_ai.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                )
+                return extract_json_smart(response.text)
+            except:
+                print("❌ Retry failed. Skipping.")
+                return None
+        else:
+            print(f"⚠️ Error: {e}")
+            return None
 
 def run_archive_and_cleanup():
-    print("🧹 Running Maintenance...")
-    now = datetime.utcnow()
+    print("🧹 Maintenance...")
     try:
-        # ניקוי כתבות ישנות מאוד (שנה אחורה)
-        one_year_ago = (now - timedelta(days=365)).isoformat()
-        supabase.table('news').delete().lt('created_at', one_year_ago).execute()
-        
-        # ניקוי כתבות שנתקעו במצב טיוטה יותר מ-24 שעות
-        limit_24h = (now - timedelta(days=1)).isoformat()
-        supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_24h).execute()
+        now = datetime.utcnow()
+        limit = (now - timedelta(days=2)).isoformat()
+        supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit).execute()
     except: pass
 
 def run_bot():
-    print(f"🚀 StyleMe Pro Engine Active - {datetime.utcnow()}")
+    print(f"🚀 StyleMe Pro Engine Active - Slow Mode")
     run_archive_and_cleanup()
 
-    # --- יצירת רשימת משימות מעורבת ---
-    # לוקחים קצת מ-RSS וקצת מנושאים כלליים
     tasks = []
-    
-    # 1. RSS Feeds (עד 6 מקורות רנדומליים)
-    rss_samples = random.sample(DIRECT_FEEDS, min(len(DIRECT_FEEDS), 6))
-    for f in rss_samples:
-        tasks.append((f, "RSS"))
+    # לוקחים פחות משימות כדי לא להעמיס
+    rss_samples = random.sample(DIRECT_FEEDS, 4) 
+    for f in rss_samples: tasks.append((f, "RSS"))
         
-    # 2. Google News Topics (עד 10 נושאים רנדומליים)
-    topic_samples = random.sample(ALL_TOPICS, min(len(ALL_TOPICS), 10))
-    for t in topic_samples:
-        tasks.append((t, "TOPIC"))
+    topic_samples = random.sample(ALL_TOPICS, 5)
+    for t in topic_samples: tasks.append((t, "TOPIC"))
         
     random.shuffle(tasks)
     items_published = 0
 
     for source, s_type in tasks:
-        if items_published >= 10: break # מגבלה כדי לא להעמיס על הריצה
+        # מגבלה קשיחה - מקסימום 5 כתבות בריצה אחת
+        if items_published >= 5: 
+            print("🛑 Daily batch limit reached.")
+            break 
         
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
         
         try:
-            print(f"📥 Fetching: {source[:40]}...")
+            print(f"📥 Fetching source...")
             resp = requests.get(url, timeout=10)
             feed = feedparser.parse(resp.content)
             
-            # לוקחים רק את הכתבה הראשונה מכל מקור כדי לגוון
             for entry in feed.entries[:1]:
-                if items_published >= 10: break
+                if items_published >= 5: break
                 
-                # בדיקת כפילויות
                 exists = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if exists.data:
-                    print("🔹 Skipping duplicate.")
+                    print("🔹 Exists.")
                     continue
 
-                # שליחה לניתוח
                 ai_data = analyze_with_flash(entry.title)
                 
                 if ai_data:
@@ -195,19 +189,19 @@ def run_bot():
                         "summaries": ai_data.get('summaries', {}),
                         "needs_full_translation": False,
                         "is_public": True,
-                        "missing_reports": 0,
-                        "retry_count": 0,
                         "created_at": datetime.utcnow().isoformat()
                     }
                     supabase.table('news').insert(item).execute()
-                    print(f"✅ Published: {entry.title[:30]}")
+                    print(f"✅ Published: {entry.title[:20]}...")
                     items_published += 1
-                    time.sleep(2) # השהייה קטנה למנוע עומס
-                else:
-                    print("❌ AI Analysis failed.")
                     
-        except Exception as e:
-            print(f"⚠️ Feed error: {e}")
+                    # --- התיקון הגדול ---
+                    # הפסקה של 30 שניות בין כל כתבה לכתבה!
+                    # זה מה שימנע את שגיאת ה-429
+                    print("💤 Resting for 30s to respect Google Quota...")
+                    time.sleep(30) 
+                    
+        except Exception:
             continue
 
 if __name__ == "__main__":
