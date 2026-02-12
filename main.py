@@ -15,8 +15,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# שימוש ב-1.5 פלאש ליציבות מקסימלית במסלול החינמי
-MODEL_NAME = "gemini-1.5-flash"
+# עדכון שם המודל לגרסה נתמכת ויציבה
+MODEL_NAME = "gemini-1.5-flash-latest" 
 EMBEDDING_MODEL = "text-embedding-004"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
@@ -24,7 +24,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
-# --- בנק 110 הנושאים המלא (The Intelligence Bank) ---
+# --- בנק 110 הנושאים המלא ---
 DIRECT_FEEDS = [
     "https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed",
     "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed",
@@ -101,11 +101,10 @@ def update_ai_budget(count):
     except: pass
 
 def analyze_and_translate(item_title, budget):
-    """ניתוח ותרגום לכל 20 השפות עם מנגנון Retry לשגיאות 429"""
     time.sleep(15) 
     if budget >= 1450: return None
     
-    prompt = f"Analyze news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
+    prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
     for attempt in range(2):
         try:
@@ -115,7 +114,7 @@ def analyze_and_translate(item_title, budget):
             return json.loads(text)
         except Exception as e:
             if "429" in str(e):
-                print(f"⏳ Quota hit, waiting 30s before retry...")
+                print(f"⏳ Quota hit, waiting 30s...")
                 time.sleep(30)
                 continue
             print(f"❌ AI Error: {e}")
@@ -125,7 +124,7 @@ def run_bot():
     budget = get_ai_budget()
     print(f"🚀 StyleMe Stable Engine. Budget: {budget}/1500")
 
-    # --- שלב 1: השלמת פערים (Catch-up) ---
+    # Catch-up
     try:
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
         if pending.data:
@@ -146,7 +145,7 @@ def run_bot():
     except Exception as e:
         print(f"Catch-up Error: {e}")
 
-    # --- שלב 2: סריקה חדשה (110 נושאים) ---
+    # New Scan
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     try:
         recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
