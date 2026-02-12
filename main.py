@@ -8,7 +8,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 import random
 import requests
-import math # שימוש בספריה מובנית במקום numpy
+import math 
 
 # --- הגדרות מערכת ---
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -23,7 +23,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
-# --- בנק המקורות הישירים (10 מקורות) ---
+# --- בנק המקורות והנושאים (110 נושאים) ---
 DIRECT_FEEDS = [
     "https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed",
     "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed",
@@ -32,7 +32,6 @@ DIRECT_FEEDS = [
     "https://www.thefashionlaw.com/feed/", "https://www.ecotextile.com/news?format=feed&type=rss"
 ]
 
-# --- בנק 110 הנושאים המלא (The Intelligence Bank) ---
 ALL_TOPICS = [
     "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026", "Runway Color Forecast 2027",
     "Minimalist Fashion Movement", "Cyberpunk & Techwear Aesthetics", "Sustainable Couture Techniques",
@@ -59,7 +58,7 @@ ALL_TOPICS = [
     "Global Fashion Retail Growth 2026", "Global Fashion Retail Growth 2027", "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
     "Raw Material Price Volatility", "Logistics Shipping Port Delay", "Air Freight Trends for Fashion",
     "Resale & Circular Economy Growth", "Clothing Rental Subscription Models", "Direct-to-Consumer Strategy News",
-    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hubs Ethiopia",
+    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hub hubs Ethiopia",
     "Post-Fast Fashion Business Models", "Merchandising Planning AI Software", "Impact of Inflation on Fashion",
     "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth", "Turkey Apparel Manufacturing News",
     "Global Cotton Stock Index", "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
@@ -75,13 +74,10 @@ ALL_TOPICS = [
 ]
 
 def cosine_similarity(v1, v2):
-    """חישוב דמיון ללא numpy"""
     sumxx, sumyy, sumxy = 0, 0, 0
     for i in range(len(v1)):
-        x = v1[i]; y = v2[i]
-        sumxx += x*x
-        sumyy += y*y
-        sumxy += x*y
+        x, y = v1[i], v2[i]
+        sumxx += x*x; sumyy += y*y; sumxy += x*y
     return sumxy / math.sqrt(sumxx*sumyy)
 
 def get_ai_budget():
@@ -105,12 +101,12 @@ def get_embedding(text):
         return res.embeddings[0].values
     except: return None
 
-def analyze_multilingual(item, budget):
+def analyze_multilingual(item_title, budget):
     time.sleep(15)
     if budget >= 1450: return None, True
     target_langs = LANG_CODES if budget < 1000 else ["he", "en", "it", "fr", "zh", "tr"]
     needs_more = budget >= 1000
-    prompt = f"Analyze and return JSON (titles/summaries in {target_langs}): {item.title}"
+    prompt = f"Analyze fashion news and return JSON (titles/summaries in {target_langs}): {item_title}"
     try:
         res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
         clean_json = res.text.strip().replace("```json", "").replace("```", "")
@@ -119,16 +115,33 @@ def analyze_multilingual(item, budget):
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Smart Engine. Full Scan Mode. Budget: {budget}/1500")
-    
+    print(f"🚀 StyleMe Smart Engine. Budget: {budget}/1500")
+
+    # --- שלב 1: השלמת פערים (Catch-up Mode) ---
+    pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(10).execute()
+    if pending.data:
+        print(f"🔄 Processing {len(pending.data)} pending items...")
+        for item in pending.data:
+            if budget >= 1450: break
+            title_to_analyze = list(item['titles'].values())[0]
+            ai_data, needs_more = analyze_multilingual(title_to_analyze, budget)
+            if ai_data:
+                supabase.table('news').update({
+                    "category": ai_data.get('category'),
+                    "titles": ai_data.get('titles'),
+                    "summaries": ai_data.get('summaries'),
+                    "needs_full_translation": needs_more
+                }).eq('id', item['id']).execute()
+                budget += 1
+                update_ai_budget(1)
+
+    # --- שלב 2: סריקה חדשה ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
-    recent_news = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
-    existing_embeddings = [item['embedding'] for item in recent_news.data if item['embedding']]
+    recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
+    existing_embs = [item['embedding'] for item in recent.data if item['embedding']]
 
     items_to_publish = []
-    selected_feeds = random.sample(DIRECT_FEEDS, min(6, len(DIRECT_FEEDS)))
-    selected_topics = random.sample(ALL_TOPICS, min(15, len(ALL_TOPICS)))
-    tasks = [(f, "RSS") for f in selected_feeds] + [(t, "TOPIC") for t in selected_topics]
+    tasks = [(f, "RSS") for f in random.sample(DIRECT_FEEDS, 6)] + [(t, "TOPIC") for t in random.sample(ALL_TOPICS, 15)]
     random.shuffle(tasks)
 
     for source, s_type in tasks:
@@ -139,37 +152,23 @@ def run_bot():
             feed = feedparser.parse(resp.content)
             for entry in feed.entries:
                 if len(items_to_publish) >= 15: break
-                existing = supabase.table('news').select("id").eq('source_url', entry.link).execute()
-                if existing.data: continue
+                if supabase.table('news').select("id").eq('source_url', entry.link).execute().data: continue
 
-                new_vector = get_embedding(entry.title)
-                if new_vector:
-                    is_semantic_duplicate = False
-                    for old_vector in existing_embeddings:
-                        if cosine_similarity(new_vector, old_vector) > 0.88:
-                            is_semantic_duplicate = True
-                            break
-                    if is_semantic_duplicate: continue
+                new_vec = get_embedding(entry.title)
+                if new_vec and any(cosine_similarity(new_vec, old) > 0.88 for old in existing_embs): continue
 
-                ai_data, needs_more = analyze_multilingual(entry, budget)
+                ai_data, needs_more = analyze_multilingual(entry.title, budget)
                 if ai_data:
                     items_to_publish.append({
-                        "source_url": entry.link,
-                        "category": ai_data.get('category', 'TRENDS'),
-                        "titles": ai_data.get('titles', {"en": entry.title}),
-                        "summaries": ai_data.get('summaries', {}),
-                        "embedding": new_vector,
-                        "needs_full_translation": needs_more,
-                        "is_public": True
+                        "source_url": entry.link, "category": ai_data.get('category', 'TRENDS'),
+                        "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
+                        "embedding": new_vec, "needs_full_translation": needs_more, "is_public": True
                     })
                     budget += 1
                 else:
                     items_to_publish.append({
-                        "source_url": entry.link,
-                        "titles": {"en": entry.title},
-                        "embedding": new_vector,
-                        "needs_full_translation": True,
-                        "is_public": True
+                        "source_url": entry.link, "titles": {"en": entry.title},
+                        "embedding": new_vec, "needs_full_translation": True, "is_public": True
                     })
         except: continue
 
