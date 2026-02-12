@@ -81,36 +81,18 @@ def get_live_models():
         models = [m.name for m in client_ai.models.list() 
                   if "generateContent" in m.supported_actions 
                   and "gemini" in m.name 
-                  and not any(x in m.name for x in ["vision", "image", "robotics"])]
-        # Sort so that Flash models (fastest/cheapest) are tried first
-        models.sort(key=lambda x: ("flash" in x, "2.0" in x), reverse=True)
-        print(f"🤖 Dynamically selected models: {models}")
-        return models if models else ["models/gemini-1.5-flash"]
+                  and not any(x in m.name for x in ["vision", "image", "robotics", "er-1.5"])]
+        # Sort Flash models first for reliability on free tier
+        models.sort(key=lambda x: ("flash" in x, "2.0" in x, "1.5" in x), reverse=True)
+        print(f"🤖 Dynamically approved models: {models[:5]}")
+        return models
     except: return ["models/gemini-1.5-flash"]
 
-def get_ai_budget():
-    try:
-        res = supabase.table('ai_budget').select("*").eq('id', 1).single().execute()
-        budget = res.data
-        last_reset = datetime.fromisoformat(budget['last_reset'].replace('Z', '+00:00'))
-        if datetime.now(last_reset.tzinfo) - last_reset > timedelta(days=1):
-            supabase.table('ai_budget').update({"requests_today": 0, "last_reset": datetime.now().isoformat()}).eq('id', 1).execute()
-            return 0
-        return budget['requests_today']
-    except: return 0
-
-def update_ai_budget(count):
-    try:
-        current = get_ai_budget()
-        supabase.table('ai_budget').update({"requests_today": current + count}).eq('id', 1).execute()
-    except: pass
-
-def analyze_dynamic_with_protection(item_title, budget, model_list):
-    if budget >= 1450: return None
+def analyze_dynamic_with_protection(item_title, model_list):
     time.sleep(15) 
     prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
-    # Try up to 3 models from the discovered list
+    # Try only the top 3 discovered models to prevent GitHub timeouts
     for model_name in model_list[:3]:
         try:
             print(f"📡 Requesting {model_name}...")
@@ -119,16 +101,15 @@ def analyze_dynamic_with_protection(item_title, budget, model_list):
                 text = res.text.strip().replace("```json", "").replace("```", "")
                 return json.loads(text)
         except Exception as e:
-            if "429" in str(e):
-                print(f"⚠️ {model_name} quota hit. Waiting 10s...")
-                time.sleep(10)
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                print(f"⚠️ {model_name} quota hit. Waiting 12s...")
+                time.sleep(12)
                 continue
             print(f"❌ {model_name} Error: {e}")
     return None
 
 def run_bot():
-    budget = get_ai_budget()
-    print(f"🚀 StyleMe Pro Engine. Budget: {budget}/1500")
+    print(f"🚀 StyleMe Pro Engine. Intelligence Broad Scan.")
     live_models = get_live_models()
 
     # --- Step 1: Catch-up ---
@@ -139,13 +120,13 @@ def run_bot():
             title_obj = item.get('titles', {})
             title = next(iter(title_obj.values())) if title_obj else "Update"
             print(f"🔄 Catching up: {title[:30]}")
-            ai_data = analyze_dynamic_with_protection(title, budget, live_models)
+            ai_data = analyze_dynamic_with_protection(title, live_models)
             if ai_data:
                 supabase.table('news').update({
                     "category": ai_data.get('category'), "titles": ai_data.get('titles'),
                     "summaries": ai_data.get('summaries'), "needs_full_translation": False
                 }).eq('id', item['id']).execute()
-                update_ai_budget(1)
+                print("✅ Catch-up complete.")
     except Exception as e: print(f"Catch-up Err: {e}")
 
     # --- Step 2: New Scan ---
@@ -176,14 +157,13 @@ def run_bot():
                     if any(cosine_similarity(new_vec, old) > 0.88 for old in existing_embs): continue
                 except: new_vec = None
 
-                ai_data = analyze_dynamic_with_protection(entry.title, budget, live_models)
+                ai_data = analyze_dynamic_with_protection(entry.title, live_models)
                 if ai_data:
                     items_to_publish.append({
                         "source_url": entry.link, "category": ai_data.get('category'),
                         "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
                         "embedding": new_vec, "needs_full_translation": False, "is_public": True
                     })
-                    budget += 1
                 else:
                     items_to_publish.append({
                         "source_url": entry.link, "titles": {"en": entry.title},
@@ -198,7 +178,6 @@ def run_bot():
             item["created_at"] = (start_time + timedelta(minutes=i * interval)).isoformat()
             try: supabase.table('news').insert(item).execute()
             except: pass
-        update_ai_budget(len(items_to_publish))
 
 if __name__ == "__main__":
     run_bot()
