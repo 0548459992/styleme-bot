@@ -15,8 +15,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# שם המודל התקני ביותר לספריית genai
-MODEL_NAME = "gemini-1.5-flash" 
+# חזרה למודל המקורי שעבד לך - Gemini 2.0 Flash
+MODEL_NAME = "gemini-2.0-flash" 
 EMBEDDING_MODEL = "text-embedding-004"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
@@ -24,7 +24,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
-# --- בנק 110 הנושאים המלא ---
+# --- בנק 110 הנושאים המלא שלך (Intelligence Bank) ---
 DIRECT_FEEDS = [
     "https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed",
     "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed",
@@ -104,18 +104,17 @@ def analyze_and_translate(item_title, budget):
     time.sleep(15) 
     if budget >= 1450: return None
     
-    prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
+    prompt = f"Analyze news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
     for attempt in range(2):
         try:
             print(f"📡 Sending to AI (Attempt {attempt+1}): {item_title[:30]}...")
-            # שימוש בשם המודל ללא קידומת models/
             res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
             text = res.text.strip().replace("```json", "").replace("```", "")
             return json.loads(text)
         except Exception as e:
             if "429" in str(e):
-                print(f"⏳ Quota hit, waiting 30s...")
+                print(f"⏳ Quota hit, waiting 30s before retry...")
                 time.sleep(30)
                 continue
             print(f"❌ AI Error: {e}")
@@ -123,17 +122,19 @@ def analyze_and_translate(item_title, budget):
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Stable Engine. Budget: {budget}/1500")
+    print(f"🚀 StyleMe Pro Engine. Broad Scan Mode. Budget: {budget}/1500")
 
-    # Catch-up
+    # --- שלב 1: Catch-up (תיקון שם המשתנה title_obj) ---
     try:
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
         if pending.data:
             item = pending.data[0]
-            t_obj = item.get('titles', {})
-            title = next(iter(title_obj.values())) if t_obj else "Fashion Update"
-            print(f"🔄 Catching up: {title[:30]}")
-            ai_data = analyze_and_translate(title, budget)
+            title_obj = item.get('titles', {}) # תיקון השם כאן
+            title_to_analyze = next(iter(title_obj.values())) if title_obj else "Fashion Update"
+            
+            print(f"🔄 Catching up: {title_to_analyze[:30]}...")
+            ai_data = analyze_and_translate(title_to_analyze, budget)
+            
             if ai_data:
                 supabase.table('news').update({
                     "category": ai_data.get('category'),
@@ -142,11 +143,11 @@ def run_bot():
                     "needs_full_translation": False
                 }).eq('id', item['id']).execute()
                 update_ai_budget(1)
-                print(f"✅ Updated pending item.")
+                print(f"✅ Updated pending item successfully.")
     except Exception as e:
         print(f"Catch-up Error: {e}")
 
-    # New Scan
+    # --- שלב 2: סריקה חדשה (כל 110 הנושאים) ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     try:
         recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
@@ -154,7 +155,8 @@ def run_bot():
     except: existing_embs = []
 
     items_to_publish = []
-    tasks = [(f, "RSS") for f in random.sample(DIRECT_FEEDS, 6)] + [(t, "TOPIC") for t in random.sample(ALL_TOPICS, 15)]
+    tasks = [(f, "RSS") for f in random.sample(DIRECT_FEEDS, min(len(DIRECT_FEEDS), 6))] + \
+            [(t, "TOPIC") for t in random.sample(ALL_TOPICS, min(len(ALL_TOPICS), 15))]
     random.shuffle(tasks)
 
     for source, s_type in tasks:
