@@ -1,4 +1,4 @@
-name: StyleMe UV Ultimate
+name: StyleMe Stable 3.9
 
 on:
   schedule:
@@ -8,33 +8,23 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # נותנים לו מספיק זמן, אבל ההתקנה תהיה מהירה
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.9 (The Stable One)
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # גרסה מודרנית ומהירה
+          python-version: '3.9' # השינוי הקריטי! גרסה יציבה שלא נתקעת
+          cache: 'pip'
 
-      - name: Install uv (The Speed Demon)
+      - name: Install Dependencies
         run: |
-          # מתקינים את המאיץ
-          pip install uv
-
-      - name: Install Dependencies with uv
-        run: |
-          # uv מתקין הכל בשניות ועוקף התנגשויות
-          # הדגל --system אומר לו להתקין ישר למערכת בלי וירטואליזציה (חוסך זמן)
-          uv pip install --system google-genai feedparser sgmllib3k supabase requests
-
-      - name: Verify Installation
-        run: |
-          # בדיקה שהספריות באמת שם
-          python -c "import google.genai; import feedparser; print('✅ Libraries Loaded Successfully')"
+          python -m pip install --upgrade pip
+          # התקנה רגילה ופשוטה. בגרסה 3.9 זה יעבוד מהר.
+          pip install google-genai feedparser supabase requests
 
       - name: Run Bot
         env:
