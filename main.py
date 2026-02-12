@@ -48,7 +48,7 @@ ALL_TOPICS = [
     "Global Fashion Retail Growth 2026", "Global Fashion Retail Growth 2027", "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
     "Raw Material Price Volatility", "Logistics Shipping Port Delay", "Air Freight Trends for Fashion",
     "Resale & Circular Economy Growth", "Clothing Rental Subscription Models", "Direct-to-Consumer Strategy News",
-    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hubs Ethiopia",
+    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hub hubs Ethiopia",
     "Post-Fast Fashion Business Models", "Merchandising Planning AI Software", "Impact of Inflation on Fashion",
     "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth", "Turkey Apparel Manufacturing News",
     "Global Cotton Stock Index", "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
@@ -63,7 +63,7 @@ ALL_TOPICS = [
     "Sustainable Fashion Awards 2026", "Sustainable Fashion Awards 2027", "Global Textile Machinery Expo"
 ]
 
-DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/"]
+DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml"]
 
 def cosine_similarity(v1, v2):
     try:
@@ -75,24 +75,24 @@ def cosine_similarity(v1, v2):
     except: return 0
 
 def get_live_models():
-    """Discover text-capable models dynamically and filter out unusable ones."""
+    """גילוי דינמי של מודלים מורשים עם סינון מודלים לא רלוונטיים"""
     try:
-        # Filter for Gemini models that support text generation but ARE NOT image/robotics focused
         models = [m.name for m in client_ai.models.list() 
                   if "generateContent" in m.supported_actions 
                   and "gemini" in m.name 
                   and not any(x in m.name for x in ["vision", "image", "robotics", "er-1.5"])]
-        # Sort Flash models first for reliability on free tier
-        models.sort(key=lambda x: ("flash" in x, "2.0" in x, "1.5" in x), reverse=True)
+        # תיעוד סדר העדיפות: 2.0 פלאש קודם, אחר כך השאר
+        models.sort(key=lambda x: ("2.0" in x, "flash" in x), reverse=True)
         print(f"🤖 Dynamically approved models: {models[:5]}")
         return models
-    except: return ["models/gemini-1.5-flash"]
+    except: return ["models/gemini-2.0-flash"]
 
 def analyze_dynamic_with_protection(item_title, model_list):
+    """ניתוח AI עם הגנת עומס ודילוג בין מודלים"""
     time.sleep(15) 
-    prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
+    prompt = f"Analyze news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
-    # Try only the top 3 discovered models to prevent GitHub timeouts
+    # ניסיון של 3 המודלים הטובים ביותר למניעת Timeouts
     for model_name in model_list[:3]:
         try:
             print(f"📡 Requesting {model_name}...")
@@ -108,11 +108,31 @@ def analyze_dynamic_with_protection(item_title, model_list):
             print(f"❌ {model_name} Error: {e}")
     return None
 
+def run_archive_and_cleanup():
+    """תחזוקת ארכיון: מחיקת שבורים (חוכמת המונים) וניקוי זבל"""
+    print("🧹 Running Maintenance...")
+    now = datetime.utcnow()
+    
+    # 1. מחיקת כתבות שדווחו כחסרות ע"י 2 משתמשים שונים
+    try:
+        supabase.table('news').delete().gte('missing_reports', 2).execute()
+    except: pass
+
+    # 2. מחיקת טיוטות (Needs Translation) שעברו 48 שעות
+    limit_48h = (now - timedelta(days=2)).isoformat()
+    try:
+        supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_48h).execute()
+    except: pass
+
 def run_bot():
     print(f"🚀 StyleMe Pro Engine. Intelligence Broad Scan.")
+    
+    # הפעלת תחזוקה בתחילת כל ריצה
+    run_archive_and_cleanup()
+    
     live_models = get_live_models()
 
-    # --- Step 1: Catch-up ---
+    # --- שלב 1: Catch-up ---
     try:
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
         if pending.data:
@@ -129,7 +149,7 @@ def run_bot():
                 print("✅ Catch-up complete.")
     except Exception as e: print(f"Catch-up Err: {e}")
 
-    # --- Step 2: New Scan ---
+    # --- שלב 2: סריקה חדשה ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     try:
         recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
@@ -162,12 +182,14 @@ def run_bot():
                     items_to_publish.append({
                         "source_url": entry.link, "category": ai_data.get('category'),
                         "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
-                        "embedding": new_vec, "needs_full_translation": False, "is_public": True
+                        "embedding": new_vec, "needs_full_translation": False, "is_public": True,
+                        "missing_reports": 0
                     })
                 else:
                     items_to_publish.append({
                         "source_url": entry.link, "titles": {"en": entry.title},
-                        "embedding": new_vec, "needs_full_translation": True, "is_public": True
+                        "embedding": new_vec, "needs_full_translation": True, "is_public": True,
+                        "missing_reports": 0
                     })
         except: continue
 
