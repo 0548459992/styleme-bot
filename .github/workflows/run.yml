@@ -1,4 +1,4 @@
-name: StyleMe Stable
+name: StyleMe Production
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # זמן סביר
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Code
@@ -17,15 +17,22 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' 
+          python-version: '3.10' # גרסה 3.10 יציבה יותר לערבוב ישן/חדש
           cache: 'pip'
 
-      - name: Install Dependencies
+      # שלב 1: התקנת הספריות הכבדות והחדשות
+      - name: Install Core Libraries
         run: |
           python -m pip install --upgrade pip
-          # הסרנו את המגבלות המיוחדות - פשוט מתקינים וזהו
-          pip install google-genai feedparser supabase requests
+          pip install google-genai supabase requests
 
+      # שלב 2: התקנת הספרייה הבעייתית בנפרד (עם העוזר שלה)
+      - name: Install RSS Parser
+        run: |
+          pip install sgmllib3k 
+          pip install feedparser
+
+      # שלב 3: הרצת הבוט
       - name: Run Bot
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
