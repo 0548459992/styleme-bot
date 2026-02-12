@@ -28,51 +28,63 @@ except Exception as e:
     print(f"❌ Connection Error: {e}")
     sys.exit(1)
 
-# --- פונקציה דינמית חכמה ---
-def get_dynamic_models():
+# --- פונקציה דינמית חכמה ונקייה ---
+def get_clean_models():
     """
-    מושך את כל המודלים מגוגל בזמן אמת,
-    אבל מסנן רק את אלו שמתאימים לשימוש חינמי (Flash)
+    מושך מודלים, מנקה את השמות, וממיין מהחזק לחלש
     """
     try:
-        print("📡 Asking Google for available models...")
-        # 1. שליפת כל המודלים
+        print("📡 Asking Google for available models...", flush=True)
         all_models = list(client_ai.models.list())
         
         valid_models = []
         for m in all_models:
             name = m.name.lower()
-            # 2. סינון קפדני
-            # חייב להיות מודל ג'מיני
+            # סינון בסיסי
             if "gemini" not in name: continue
-            # חייב לתמוך ביצירת תוכן
             if "generateContent" not in m.supported_actions: continue
-            # אסור שיהיה מודל ראייה בלבד
             if "vision" in name: continue
             
-            # --- הכלל הכי חשוב: רק FLASH ---
-            # אנחנו מסננים החוצה את Pro/Ultra כי הם גומרים את המכסה מיד
+            # רק משפחת Flash
             if "flash" in name:
-                valid_models.append(m.name)
+                # --- התיקון הקריטי: ניקוי הקידומת models/ ---
+                clean_name = m.name.replace("models/", "")
+                valid_models.append(clean_name)
 
-        # 3. מיון: שמים את גרסה 2.0 למעלה, ואת גרסאות ה-8b (הקלות) בסוף
-        # המיון הוא הפוך כדי שהמספרים הגבוהים (2.0) יהיו ראשונים
-        valid_models.sort(reverse=True)
+        # מיון חכם: קודם כל דגמים עם מספרים (2.0, 1.5) ורק בסוף 'latest'
+        # זה מבטיח שנקבל גרסאות יציבות לפני גרסאות ניסיוניות
+        valid_models.sort(key=lambda x: (
+            not x[0].isdigit(), # מספרים קודם
+            x                   # ואז מיון רגיל
+        ), reverse=False) # סדר יורד כדי שהמספרים הגבוהים יהיו ראשונים? לא, נעשה מיון מותאם ידנית:
         
-        print(f"✅ Discovered {len(valid_models)} Flash models: {valid_models}")
+        # מיון ידני פשוט: שמים את 2.0 ו-1.5 בראש הרשימה
+        priority_list = []
+        others = []
+        for m in valid_models:
+            if "2.0" in m or "1.5" in m:
+                priority_list.append(m)
+            else:
+                others.append(m)
         
-        if not valid_models:
-            # גיבוי למקרה חירום שמשהו השתנה בפורמט השמות
+        # מיון פנימי (מהגדול לקטן)
+        priority_list.sort(reverse=True)
+        
+        final_list = priority_list + others
+        
+        print(f"✅ Clean Models List: {final_list}", flush=True)
+        
+        if not final_list:
             return ["gemini-2.0-flash", "gemini-1.5-flash"]
             
-        return valid_models
+        return final_list
 
     except Exception as e:
-        print(f"⚠️ Dynamic discovery failed: {e}. Using fallback.")
+        print(f"⚠️ Discovery failed: {e}", flush=True)
         return ["gemini-2.0-flash", "gemini-1.5-flash"]
 
-# טוענים את המודלים פעם אחת בתחילת הריצה
-CURRENT_MODELS = get_dynamic_models()
+# טעינת המודלים
+CURRENT_MODELS = get_clean_models()
 
 LANG_CODES = ["he", "en", "it", "fr", "es", "de", "jp"]
 
@@ -110,7 +122,6 @@ ALL_TOPICS = [
 ]
 
 def extract_json_smart(text):
-    """מחלץ JSON נקי"""
     try:
         return json.loads(text)
     except:
@@ -122,8 +133,7 @@ def extract_json_smart(text):
             return None
         except: return None
 
-def analyze_dynamic_fallback(item_title):
-    """משתמש ברשימה הדינמית שמצאנו"""
+def analyze_dynamic_exec(item_title):
     prompt = f"""
     Act as a Fashion Editor. Analyze this news title: "{item_title}".
     Return a JSON object ONLY with:
@@ -133,10 +143,9 @@ def analyze_dynamic_fallback(item_title):
     Return JSON only.
     """
     
-    # עובר על הרשימה הדינמית
     for model_name in CURRENT_MODELS:
         try:
-            print(f"🧠 Trying dynamic model: {model_name}...")
+            print(f"🧠 Trying: {model_name}...", flush=True)
             response = client_ai.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -147,20 +156,20 @@ def analyze_dynamic_fallback(item_title):
         except Exception as e:
             err_msg = str(e).lower()
             if "404" in err_msg:
-                print(f"⚠️ {model_name} not found (weird for dynamic list). Next...")
+                print(f"⚠️ {model_name} skipped (Not Found).", flush=True)
                 continue
             if "429" in err_msg or "quota" in err_msg:
-                print(f"⚠️ {model_name} Quota full. Trying next...")
+                print(f"⚠️ {model_name} skipped (Quota).", flush=True)
                 continue
             
-            print(f"❌ Error: {e}")
+            print(f"❌ Error with {model_name}: {e}", flush=True)
             continue
 
-    print("🛑 All dynamic models failed.")
+    print("🛑 All models exhausted.", flush=True)
     sys.exit(0)
 
 def run_archive_and_cleanup():
-    print("🧹 Cleaning old database entries...")
+    print("🧹 Cleaning DB...", flush=True)
     try:
         now = datetime.utcnow()
         limit = (now - timedelta(hours=24)).isoformat()
@@ -168,7 +177,7 @@ def run_archive_and_cleanup():
     except: pass
 
 def run_bot():
-    print(f"🚀 StyleMe DYNAMIC Engine Active")
+    print(f"🚀 StyleMe ULTIMATE Engine Active", flush=True)
     run_archive_and_cleanup()
 
     tasks = []
@@ -185,13 +194,13 @@ def run_bot():
 
     for source, s_type in tasks:
         if items_published >= MAX_ARTICLES_PER_RUN: 
-            print("🏁 Batch done.")
+            print("🏁 Batch done.", flush=True)
             break 
         
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
         
         try:
-            print(f"📥 Checking source...")
+            print(f"📥 Checking source...", flush=True)
             resp = requests.get(url, timeout=10)
             feed = feedparser.parse(resp.content)
             
@@ -200,10 +209,10 @@ def run_bot():
                 
                 exists = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if exists.data:
-                    print("🔹 Exists.")
+                    print("🔹 Exists.", flush=True)
                     continue
 
-                ai_data = analyze_dynamic_fallback(entry.title)
+                ai_data = analyze_dynamic_exec(entry.title)
                 
                 if ai_data:
                     item = {
@@ -216,7 +225,7 @@ def run_bot():
                         "created_at": datetime.utcnow().isoformat()
                     }
                     supabase.table('news').insert(item).execute()
-                    print(f"✅ PUBLISHED: {entry.title[:30]}...")
+                    print(f"✅ PUBLISHED: {entry.title[:30]}...", flush=True)
                     items_published += 1
                     time.sleep(10) 
                 
