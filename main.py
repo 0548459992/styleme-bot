@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import random
 import requests
 import math 
-import sys # הוספת ספריה ליציאה נקייה מהסקריפט
+import sys 
 
 # --- הגדרות מערכת ---
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -66,15 +66,6 @@ ALL_TOPICS = [
 
 DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml"]
 
-def cosine_similarity(v1, v2):
-    try:
-        sumxx, sumyy, sumxy = 0, 0, 0
-        for i in range(len(v1)):
-            x, y = v1[i], v2[i]
-            sumxx += x*x; sumyy += y*y; sumxy += x*y
-        return sumxy / math.sqrt(sumxx*sumyy)
-    except: return 0
-
 def get_live_models():
     """Discovering one representative per family to avoid loop-quota errors"""
     try:
@@ -97,7 +88,7 @@ def get_live_models():
 
 def analyze_dynamic_with_protection(item_title, model_list):
     """Analysis with immediate stop if Google is overloaded"""
-    prompt = f"Analyze news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
+    prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
     for model_name in model_list[:3]:
         try:
@@ -108,9 +99,9 @@ def analyze_dynamic_with_protection(item_title, model_list):
                 return json.loads(text)
         except Exception as e:
             err_str = str(e).upper()
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+            if any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
                 print(f"🛑 Google API Overload ({model_name}). Stopping run to prevent lockout.")
-                sys.exit(0) # יציאה נקייה מהסקריפט - ננסה שוב בריצה הבאה של ה-GitHub Actions
+                sys.exit(0) 
             print(f"❌ Minor Error with {model_name}: {e}")
     return None
 
@@ -118,33 +109,50 @@ def run_archive_and_cleanup():
     print("🧹 Running Maintenance...")
     now = datetime.utcnow()
     try:
-        # Cleanup broken links reported by users
+        # 1. מחיקת קישורים שבורים (דיווח קהילה)
         supabase.table('news').delete().gte('missing_reports', 2).execute()
-        # Cleanup old untranslated drafts
-        limit_48h = (now - timedelta(days=2)).isoformat()
-        supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_48h).execute()
-    except: pass
+        
+        # 2. מחיקת כתבות שעברה שנה (ארכיון מקסימלי)
+        one_year_ago = (now - timedelta(days=365)).isoformat()
+        supabase.table('news').delete().lt('created_at', one_year_ago).execute()
+        
+        # 3. ניקוי טיוטות ישנות (24 שעות)
+        limit_24h = (now - timedelta(days=1)).isoformat()
+        supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_24h).execute()
+    except Exception as e:
+        print(f"Maintenance Error: {e}")
 
 def run_bot():
-    print(f"🚀 StyleMe Pro Engine. Intelligence Broad Scan.")
+    print(f"🚀 StyleMe Pro Engine Active.")
     run_archive_and_cleanup()
     live_models = get_live_models()
 
-    # --- Step 1: Catch-up ---
+    # --- Step 1: Catch-up (With Poison Pill Protection) ---
     try:
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
         if pending.data:
             item = pending.data[0]
-            title_obj = item.get('titles', {})
-            title = next(iter(title_obj.values())) if title_obj else "Update"
-            print(f"🔄 Catching up: {title[:30]}")
-            ai_data = analyze_dynamic_with_protection(title, live_models)
-            if ai_data:
-                supabase.table('news').update({
-                    "category": ai_data.get('category'), "titles": ai_data.get('titles'),
-                    "summaries": ai_data.get('summaries'), "needs_full_translation": False
-                }).eq('id', item['id']).execute()
-                print("✅ Catch-up complete.")
+            retry_count = item.get('retry_count', 0)
+            
+            if retry_count > 3:
+                print(f"🗑️ Deleting poison pill article after {retry_count} retries.")
+                supabase.table('news').delete().eq('id', item['id']).execute()
+            else:
+                title_obj = item.get('titles', {})
+                title = next(iter(title_obj.values())) if title_obj else "Update"
+                print(f"🔄 Catching up (Attempt {retry_count + 1}): {title[:30]}")
+                
+                ai_data = analyze_dynamic_with_protection(title, live_models)
+                if ai_data:
+                    supabase.table('news').update({
+                        "category": ai_data.get('category'), "titles": ai_data.get('titles'),
+                        "summaries": ai_data.get('summaries'), "needs_full_translation": False,
+                        "retry_count": 0 # איפוס בהצלחה
+                    }).eq('id', item['id']).execute()
+                    print("✅ Catch-up complete.")
+                else:
+                    # עדכון מונה הניסיונות אם לא חזר דאטה אבל לא הייתה שגיאת 429
+                    supabase.table('news').update({"retry_count": retry_count + 1}).eq('id', item['id']).execute()
     except Exception as e: print(f"Catch-up Err: {e}")
 
     # --- Step 2: New Scan ---
@@ -167,6 +175,8 @@ def run_bot():
             feed = feedparser.parse(resp.content)
             for entry in feed.entries[:2]:
                 if len(items_to_publish) >= 12: break
+                
+                # בדיקת כפילות
                 if supabase.table('news').select("id").eq('source_url', entry.link).execute().data: continue
 
                 ai_data = analyze_dynamic_with_protection(entry.title, live_models)
@@ -174,14 +184,12 @@ def run_bot():
                     items_to_publish.append({
                         "source_url": entry.link, "category": ai_data.get('category'),
                         "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
-                        "embedding": None, "needs_full_translation": False, "is_public": True,
-                        "missing_reports": 0
+                        "needs_full_translation": False, "is_public": True, "missing_reports": 0, "retry_count": 0
                     })
                 else:
                     items_to_publish.append({
                         "source_url": entry.link, "titles": {"en": entry.title},
-                        "embedding": None, "needs_full_translation": True, "is_public": True,
-                        "missing_reports": 0
+                        "needs_full_translation": True, "is_public": True, "missing_reports": 0, "retry_count": 0
                     })
         except: continue
 
