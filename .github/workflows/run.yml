@@ -1,4 +1,4 @@
-name: StyleMe Fast Debug
+name: StyleMe Stable
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # <-- שינינו ל-10 דקות! אם זה נתקע, זה יחתוך מיד.
+    timeout-minutes: 15  # זמן סביר
 
     steps:
       - name: Checkout Code
@@ -17,22 +17,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # שינינו ל-3.11, לפעמים זה פותר בעיות תאימות עם גוגל
-          cache: 'pip' 
+          python-version: '3.11' 
+          cache: 'pip'
 
-      - name: Debug - List Files
-        run: ls -R
-
-      - name: Install Base Libraries
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # מתקין רק את הבסיס קודם כדי לראות אם זה עובד
-          pip install requests feedparser supabase --only-binary=:all:
-
-      - name: Install Google GenAI
-        run: |
-          # התקנה נפרדת כדי לבודד את הבעיה
-          pip install google-genai --only-binary=:all:
+          # הסרנו את המגבלות המיוחדות - פשוט מתקינים וזהו
+          pip install google-genai feedparser supabase requests
 
       - name: Run Bot
         env:
