@@ -1,29 +1,44 @@
-import os
+import sys
 import time
-import feedparser
-from google import genai
-from google.genai import types
-import json
-from supabase import create_client
-import urllib.parse
-from datetime import datetime, timedelta
-import random
-import requests
-import math 
-import sys 
-import re # חובה עבור ניקוי JSON
+import os
+
+# --- בדיקת תקינות ספריות (כדי למנוע קריסה שקטה) ---
+try:
+    import feedparser
+    import requests
+    import json
+    import math
+    import random
+    import re
+    import urllib.parse
+    from datetime import datetime, timedelta
+    from supabase import create_client
+    from google import genai
+    from google.genai import types
+except ImportError as e:
+    print(f"❌ CRITICAL ERROR: Missing library. {e}")
+    print("Please update requirements.txt with: google-genai, supabase, feedparser, requests")
+    sys.exit(1)
 
 # --- הגדרות מערכת ---
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+try:
+    SUPABASE_URL = os.environ["SUPABASE_URL"]
+    SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+    GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+except KeyError as e:
+    print(f"❌ CRITICAL ERROR: Missing Secret Key: {e}")
+    sys.exit(1)
 
-client_ai = genai.Client(api_key=GEMINI_API_KEY)
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# אתחול קליינטים
+try:
+    client_ai = genai.Client(api_key=GEMINI_API_KEY)
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"❌ Connection Error: {e}")
+    sys.exit(1)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
-# רשימת הנושאים (קוצרה לתצוגה, הקוד המלא מכיל את כולם)
 ALL_TOPICS = [
     "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026",
     "Sustainable Couture Techniques", "Bespoke Tailoring Industry News", "Womenswear Silhouette Innovation",
@@ -66,7 +81,7 @@ ALL_TOPICS = [
 DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml"]
 
 def get_live_models():
-    """Discover models dynamically but prioritize stability (1.5) over bleeding edge (2.0)"""
+    """Discover models dynamically - Prioritize Flash/Standard, Avoid Lite/Pro if possible"""
     try:
         raw_list = [m.name for m in client_ai.models.list() 
                     if "generateContent" in m.supported_actions 
@@ -82,26 +97,23 @@ def get_live_models():
         
         final_list = list(unique_families.values())
         
-        # אסטרטגיית מיון חדשה:
-        # 1. תן עדיפות לגרסה 1.5 (הכי יציבה)
-        # 2. תן עדיפות ל-Flash
-        # 3. דחף את Lite לסוף (הוא גורם לשגיאות JSON)
+        # מיון חכם: מוריד את Lite לתחתית, מעלה את Flash לראש
         final_list.sort(key=lambda x: (
-            "lite" in x.lower(),      # Lite ילך לסוף (False בא לפני True במיון)
-            not "1.5" in x,           # 1.5 ילך להתחלה
-            not "flash" in x          # Flash ילך להתחלה
+            "lite" in x.lower(),      
+            not "1.5" in x,           
+            not "flash" in x          
         ))
         
         print(f"🤖 Smart Sorted Models: {final_list}")
         return final_list
-    except: return []
+    except Exception as e:
+        print(f"⚠️ Model discovery failed: {e}")
+        return []
 
 def clean_json_text(text):
-    """מנקה שגיאות נפוצות של מודלים חלשים"""
     text = text.strip()
     if text.startswith("```json"): text = text[7:]
     if text.endswith("```"): text = text[:-3]
-    # תיקון escape chars בעייתיים שגרמו לקריסה בלוג שלך
     text = text.replace("\\", "\\\\") 
     return text
 
@@ -111,7 +123,7 @@ def analyze_dynamic_with_protection(item_title, model_list):
     prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     json_config = types.GenerateContentConfig(response_mime_type="application/json")
     
-    for model_name in model_list[:6]: # מנסים עד 6 מודלים שונים
+    for model_name in model_list[:6]: 
         try:
             print(f"📡 Testing: {model_name}...")
             res = client_ai.models.generate_content(
@@ -122,17 +134,15 @@ def analyze_dynamic_with_protection(item_title, model_list):
             
             if res.text:
                 try:
-                    # ניסיון ראשון: קריאה ישירה
                     return json.loads(res.text)
                 except json.JSONDecodeError:
-                    # ניסיון שני: ניקוי ותיקון
                     print(f"⚠️ JSON fix needed for {model_name}...")
                     cleaned = clean_json_text(res.text)
                     try:
                         return json.loads(cleaned)
                     except:
                         print(f"❌ JSON unfixable from {model_name}. Skipping.")
-                        continue # עוברים למודל הבא במקום לקרוס!
+                        continue 
                 
         except Exception as e:
             err_str = str(e).upper()
@@ -151,9 +161,11 @@ def run_archive_and_cleanup():
     print("🧹 Running Maintenance...")
     now = datetime.utcnow()
     try:
-        supabase.table('news').delete().gte('missing_reports', 3).execute()
+        # מחיקת כפילויות תגובות אם ישנן
+        # ניקוי כתבות ישנות
         one_year_ago = (now - timedelta(days=365)).isoformat()
         supabase.table('news').delete().lt('created_at', one_year_ago).execute()
+        # מחיקת כתבות תקועות
         limit_24h = (now - timedelta(days=1)).isoformat()
         supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_24h).execute()
     except: pass
@@ -174,7 +186,7 @@ def run_bot():
             item = pending.data[0]
             retry_count = item.get('retry_count', 0)
             
-            if retry_count > 5: # הגדלתי ל-5 ניסיונות
+            if retry_count > 5:
                 print(f"🗑️ Deleting toxic article: {item['id']}")
                 supabase.table('news').delete().eq('id', item['id']).execute()
             else:
