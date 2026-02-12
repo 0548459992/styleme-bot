@@ -1,39 +1,40 @@
-name: StyleMe Bot 2.0
+name: StyleMe Fast Debug
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # רץ כל 30 דקות
-  workflow_dispatch:        # מאפשר הרצה ידנית לכפתור Run Workflow
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10     # הגנה כדי לא להיתקע
+    timeout-minutes: 10  # <-- שינינו ל-10 דקות! אם זה נתקע, זה יחתוך מיד.
 
     steps:
-      # 1. הורדת הקוד מהמאגר
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. התקנת פייתון
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          cache: 'pip'
+          python-version: '3.11' # שינינו ל-3.11, לפעמים זה פותר בעיות תאימות עם גוגל
+          cache: 'pip' 
 
-      # 3. בדיקה שהקובץ קיים (דיבוג)
-      - name: Verify Files
+      - name: Debug - List Files
         run: ls -R
 
-      # 4. התקנת ספריות (בלי קובץ requirements כדי למנוע טעויות)
-      - name: Install Libraries
+      - name: Install Base Libraries
         run: |
           python -m pip install --upgrade pip
-          pip install google-genai feedparser supabase requests
+          # מתקין רק את הבסיס קודם כדי לראות אם זה עובד
+          pip install requests feedparser supabase --only-binary=:all:
 
-      # 5. הרצת הבוט
-      - name: Run Main Script
+      - name: Install Google GenAI
+        run: |
+          # התקנה נפרדת כדי לבודד את הבעיה
+          pip install google-genai --only-binary=:all:
+
+      - name: Run Bot
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
