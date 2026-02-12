@@ -1,4 +1,4 @@
-name: StyleMe Brute Force
+name: StyleMe UV Fast
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # אם זה לא עובד תוך 15 דקות, זה לא יעבוד בכלל
+    timeout-minutes: 5 # הגנה מתקיעות
 
     steps:
       - name: Checkout Code
@@ -17,24 +17,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' 
+          python-version: '3.11'
 
-      - name: Install Dependencies Manually
+      # שלב 1: התקנת הכלי המהיר uv
+      - name: Install uv (The Magic Tool)
+        run: pip install uv
+
+      # שלב 2: התקנת הספריות בעזרת uv (מהיר פי 100)
+      - name: Install Libraries with uv
         run: |
-          python -m pip install --upgrade pip
-          
-          # 1. מתקינים את הספריות ה"קלות" קודם
-          pip install requests supabase
-          
-          # 2. מתקינים את הרכיב החסר של ה-RSS ידנית
-          pip install sgmllib3k
-          
-          # 3. מתקינים את feedparser בכוח, בלי לבדוק תלויות (כי התקנו אותן הרגע)
-          pip install feedparser --no-deps
-          
-          # 4. מתקינים את גוגל אחרון, גם כן בלי לבדוק תלויות של אחרים
-          pip install google-genai
+          # uv פותר את הבעיות ש-pip נתקע בהן
+          uv pip install --system google-genai feedparser sgmllib3k supabase requests
 
+      # שלב 3: הרצת הבוט
       - name: Run Bot
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
