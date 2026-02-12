@@ -22,6 +22,8 @@ client_ai = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
+CORE_LANGS = ["he", "en", "it", "fr", "zh", "tr"]
+EXTRA_LANGS = [l for l in LANG_CODES if l not in CORE_LANGS]
 
 # --- בנק המקורות והנושאים המלא (110 נושאים) ---
 DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml", "https://hypebeast.com/feed", "https://www.apparelresources.com/feed/", "https://www.thefashionlaw.com/feed/", "https://www.ecotextile.com/news?format=feed&type=rss"]
@@ -89,31 +91,42 @@ def update_ai_budget(count):
     current = get_ai_budget()
     supabase.table('ai_budget').update({"requests_today": current + count}).eq('id', 1).execute()
 
-def analyze_multilingual(item_title, budget):
+def analyze_split(item_title, budget):
+    """ניתוח חסין קריסות באמצעות פיצול בקשות"""
     time.sleep(15)
     if budget >= 1450: return None, True
-    # שומרים על כל 20 השפות בכל מקרה
-    prompt = f"Analyze fashion news and return JSON (titles/summaries in ALL {LANG_CODES}): {item_title}"
+    
+    # שלב א': שפות ליבה וקטגוריה
+    prompt_a = f"Analyze fashion news. Return JSON with 'category', 'titles' and 'summaries' for {CORE_LANGS}: {item_title}"
     try:
-        res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
-        clean_json = res.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(clean_json), False
+        res_a = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt_a)
+        data = json.loads(res_a.text.strip().replace("```json", "").replace("```", ""))
+        
+        # שלב ב': השלמת 14 שפות נוספות (מהיר יותר ל-AI)
+        time.sleep(5)
+        summary_en = data['summaries'].get('en', item_title)
+        prompt_b = f"Translate this fashion summary to {EXTRA_LANGS}. Return ONLY JSON with 'titles' and 'summaries': {summary_en}"
+        res_b = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt_b)
+        extra_data = json.loads(res_b.text.strip().replace("```json", "").replace("```", ""))
+        
+        # מיזוג
+        data['titles'].update(extra_data.get('titles', {}))
+        data['summaries'].update(extra_data.get('summaries', {}))
+        return data, False
     except: return None, True
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Smart Engine. Full Intelligence Mode. Budget: {budget}/1500")
+    print(f"🚀 StyleMe Pro Engine. Full Intelligence Mode. Budget: {budget}/1500")
 
-    # --- שלב 1: השלמת פערים (Catch-up) - פריט אחד בכל פעם ליציבות ---
+    # --- שלב 1: השלמת פערים (Catch-up) פריט אחד בכל פעם ---
     pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
     if pending.data:
         item = pending.data[0]
         title_obj = item.get('titles', {})
         title_to_analyze = next(iter(title_obj.values())) if title_obj else "Unknown Title"
-        
-        print(f"🔄 Processing pending item: {title_to_analyze[:30]}...")
-        ai_data, needs_more = analyze_multilingual(title_to_analyze, budget)
-        
+        print(f"🔄 Processing pending: {title_to_analyze[:30]}...")
+        ai_data, needs_more = analyze_split(title_to_analyze, budget)
         if ai_data:
             supabase.table('news').update({
                 "category": ai_data.get('category'),
@@ -121,17 +134,15 @@ def run_bot():
                 "summaries": ai_data.get('summaries'),
                 "needs_full_translation": False
             }).eq('id', item['id']).execute()
-            budget += 1
-            update_ai_budget(1)
+            update_ai_budget(2) # 2 פניות ל-AI
             print(f"✅ Successfully updated pending item.")
 
-    # --- שלב 2: סריקה חדשה (כל 110 הנושאים) ---
+    # --- שלב 2: סריקת כתבות חדשות (110 נושאים) ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
     existing_embs = [item['embedding'] for item in recent.data if item['embedding']]
 
     items_to_publish = []
-    # הגרלת משימות מתוך הבנק המלא
     tasks = [(f, "RSS") for f in random.sample(DIRECT_FEEDS, 6)] + [(t, "TOPIC") for t in random.sample(ALL_TOPICS, 15)]
     random.shuffle(tasks)
 
@@ -145,21 +156,20 @@ def run_bot():
                 if len(items_to_publish) >= 15: break
                 if supabase.table('news').select("id").eq('source_url', entry.link).execute().data: continue
 
-                # בדיקת דמיון סמנטי
                 try:
                     res_emb = client_ai.models.embed_content(model=EMBEDDING_MODEL, contents=entry.title)
                     new_vec = res_emb.embeddings[0].values
                     if any(cosine_similarity(new_vec, old) > 0.88 for old in existing_embs): continue
                 except: new_vec = None
 
-                ai_data, needs_more = analyze_multilingual(entry.title, budget)
+                ai_data, needs_more = analyze_split(entry.title, budget)
                 if ai_data:
                     items_to_publish.append({
                         "source_url": entry.link, "category": ai_data.get('category', 'TRENDS'),
                         "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
                         "embedding": new_vec, "needs_full_translation": False, "is_public": True
                     })
-                    budget += 1
+                    budget += 2
                 else:
                     items_to_publish.append({
                         "source_url": entry.link, "titles": {"en": entry.title},
@@ -173,7 +183,7 @@ def run_bot():
         for i, item in enumerate(items_to_publish):
             item["created_at"] = (start_time + timedelta(minutes=i * interval)).isoformat()
             supabase.table('news').insert(item).execute()
-        update_ai_budget(len(items_to_publish))
+        update_ai_budget(len(items_to_publish) * 2)
 
 if __name__ == "__main__":
     run_bot()
