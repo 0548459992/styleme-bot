@@ -1,6 +1,4 @@
-google-generativeai
-feedparser
-supabase
 google-genai
+supabase
+feedparser
 requests
-numpy
