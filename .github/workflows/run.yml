@@ -1,4 +1,4 @@
-name: StyleMe Stable 3.9
+name: StyleMe Final Fix
 
 on:
   schedule:
@@ -14,16 +14,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.9 (The Stable One)
+      - name: Set up Python 3.9
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9' # השינוי הקריטי! גרסה יציבה שלא נתקעת
-          cache: 'pip'
-
+          python-version: '3.9' 
+          # מחקנו את השורה cache: 'pip' שגרמה לשגיאה
+          
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # התקנה רגילה ופשוטה. בגרסה 3.9 זה יעבוד מהר.
+          # התקנה ישירה ומהירה
           pip install google-genai feedparser supabase requests
 
       - name: Run Bot
