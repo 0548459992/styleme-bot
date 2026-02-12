@@ -3,7 +3,6 @@ import time
 import os
 import json
 import random
-import re
 import urllib.parse
 import feedparser
 import requests
@@ -66,7 +65,7 @@ ALL_TOPICS = [
 ]
 
 def extract_json_smart(text):
-    """מחלץ JSON נקי ומסנן רעשי רקע"""
+    """מחלץ JSON נקי"""
     try:
         return json.loads(text)
     except:
@@ -78,8 +77,8 @@ def extract_json_smart(text):
             return None
         except: return None
 
-def analyze_turtle_mode(item_title):
-    """ניתוח במצב צב - איטי ובטוח"""
+def analyze_polite_mode(item_title):
+    """ניתוח מנומס - אם אין מכסה, עוצרים מיד"""
     prompt = f"""
     Act as a Fashion Editor. Analyze this news title: "{item_title}".
     Return a JSON object ONLY with:
@@ -89,10 +88,11 @@ def analyze_turtle_mode(item_title):
     Return JSON only.
     """
     
+    # מנסים את המודל החדש והמהיר
     model = "gemini-2.0-flash"
     
     try:
-        print(f"🐢 Analyzing (Slowly)...")
+        print(f"🧠 Asking Google AI...")
         response = client_ai.models.generate_content(
             model=model,
             contents=prompt,
@@ -101,66 +101,63 @@ def analyze_turtle_mode(item_title):
         return extract_json_smart(response.text)
             
     except Exception as e:
-        # טיפול בשגיאות עומס
         err_msg = str(e).lower()
-        if "429" in err_msg or "quota" in err_msg:
-            print("🛑 Quota hit! Sleeping 120s (2 mins)...")
-            time.sleep(120) 
-            return None # מוותרים הפעם, ננסה בריצה הבאה
+        if "429" in err_msg or "quota" in err_msg or "resource_exhausted" in err_msg:
+            print("🛑 DAILY QUOTA REACHED. Stopping bot to save energy.")
+            print("👋 See you in 30 minutes!")
+            sys.exit(0) # יציאה מסודרת מהתוכנית - לא שגיאה!
         else:
-            print(f"⚠️ Error: {e}")
+            print(f"⚠️ API Error: {e}")
             return None
 
 def run_archive_and_cleanup():
-    print("🧹 Maintenance...")
+    print("🧹 Cleaning old database entries...")
     try:
         now = datetime.utcnow()
-        # מחיקת טיוטות ישנות
-        limit = (now - timedelta(hours=12)).isoformat()
+        limit = (now - timedelta(hours=24)).isoformat()
         supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit).execute()
     except: pass
 
 def run_bot():
-    print(f"🚀 StyleMe TURTLE Engine Active 🐢")
+    print(f"🚀 StyleMe 'Polite' Engine Active")
     run_archive_and_cleanup()
 
     tasks = []
-    # לוקחים דגימות קטנות מאוד
-    rss_samples = random.sample(DIRECT_FEEDS, 3) 
+    # מגרילים משימות
+    rss_samples = random.sample(DIRECT_FEEDS, 2) 
     for f in rss_samples: tasks.append((f, "RSS"))
         
-    topic_samples = random.sample(ALL_TOPICS, 3)
+    topic_samples = random.sample(ALL_TOPICS, 2)
     for t in topic_samples: tasks.append((t, "TOPIC"))
         
     random.shuffle(tasks)
     
-    # --- המגבלה הקריטית ---
-    # רק 3 כתבות לכל הפעלה של הבוט!
-    MAX_ARTICLES_PER_RUN = 3
+    # מגבלה קשיחה - 2 כתבות לריצה עד שהמצב יתייצב
+    MAX_ARTICLES_PER_RUN = 2
     items_published = 0
 
     for source, s_type in tasks:
         if items_published >= MAX_ARTICLES_PER_RUN: 
-            print("🛑 Batch limit reached. Bye!")
+            print("🏁 Daily batch limit reached. Done for now.")
             break 
         
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
         
         try:
-            print(f"📥 Fetching source...")
+            print(f"📥 Checking source...")
             resp = requests.get(url, timeout=10)
             feed = feedparser.parse(resp.content)
             
-            # רק כתבה אחת ממקור זה
             for entry in feed.entries[:1]:
                 if items_published >= MAX_ARTICLES_PER_RUN: break
                 
                 exists = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if exists.data:
-                    print("🔹 Exists.")
+                    print("🔹 Article already exists.")
                     continue
 
-                ai_data = analyze_turtle_mode(entry.title)
+                # כאן הקסם קורה - אם אין מכסה, התוכנית תעצור כאן
+                ai_data = analyze_polite_mode(entry.title)
                 
                 if ai_data:
                     item = {
@@ -173,14 +170,12 @@ def run_bot():
                         "created_at": datetime.utcnow().isoformat()
                     }
                     supabase.table('news').insert(item).execute()
-                    print(f"✅ Published: {entry.title[:20]}...")
+                    print(f"✅ PUBLISHED: {entry.title[:30]}...")
                     items_published += 1
-                    
-                    # --- ההפסקה הגדולה ---
-                    # דקה שלמה של מנוחה בין הצלחות
-                    print("💤 Cooling down for 60s...")
-                    time.sleep(60) 
+                    time.sleep(10) 
                 
+        except SystemExit:
+            raise # נותן ליציאה לקרות
         except Exception:
             continue
 
