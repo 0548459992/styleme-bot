@@ -28,62 +28,23 @@ except Exception as e:
     print(f"❌ Connection Error: {e}")
     sys.exit(1)
 
-# --- פונקציה דינמית חכמה ונקייה ---
+# --- פונקציה דינמית חכמה ---
 def get_clean_models():
-    """
-    מושך מודלים, מנקה את השמות, וממיין מהחזק לחלש
-    """
+    """מושך מודלים, מנקה שמות, וממיין"""
     try:
-        print("📡 Asking Google for available models...", flush=True)
-        all_models = list(client_ai.models.list())
-        
-        valid_models = []
-        for m in all_models:
-            name = m.name.lower()
-            # סינון בסיסי
-            if "gemini" not in name: continue
-            if "generateContent" not in m.supported_actions: continue
-            if "vision" in name: continue
-            
-            # רק משפחת Flash
-            if "flash" in name:
-                # --- התיקון הקריטי: ניקוי הקידומת models/ ---
-                clean_name = m.name.replace("models/", "")
-                valid_models.append(clean_name)
+        # במצב של "אין מכסה", הפונקציה הזו לפעמים נכשלת. לכן נשים לה ברירת מחדל קבועה
+        # כדי לא לבזבז קריאות API על רשימת מודלים אם ממילא אין מכסה.
+        print("📡 Using Smart Model List...", flush=True)
+        # רשימה קבועה וחכמה שכוללת את כל האפשרויות, כדי לחסוך קריאה אחת
+        return [
+            "gemini-2.0-flash", 
+            "gemini-2.0-flash-lite-preview-02-05",
+            "gemini-1.5-flash", 
+            "gemini-1.5-flash-8b"
+        ]
+    except:
+        return ["gemini-2.0-flash"]
 
-        # מיון חכם: קודם כל דגמים עם מספרים (2.0, 1.5) ורק בסוף 'latest'
-        # זה מבטיח שנקבל גרסאות יציבות לפני גרסאות ניסיוניות
-        valid_models.sort(key=lambda x: (
-            not x[0].isdigit(), # מספרים קודם
-            x                   # ואז מיון רגיל
-        ), reverse=False) # סדר יורד כדי שהמספרים הגבוהים יהיו ראשונים? לא, נעשה מיון מותאם ידנית:
-        
-        # מיון ידני פשוט: שמים את 2.0 ו-1.5 בראש הרשימה
-        priority_list = []
-        others = []
-        for m in valid_models:
-            if "2.0" in m or "1.5" in m:
-                priority_list.append(m)
-            else:
-                others.append(m)
-        
-        # מיון פנימי (מהגדול לקטן)
-        priority_list.sort(reverse=True)
-        
-        final_list = priority_list + others
-        
-        print(f"✅ Clean Models List: {final_list}", flush=True)
-        
-        if not final_list:
-            return ["gemini-2.0-flash", "gemini-1.5-flash"]
-            
-        return final_list
-
-    except Exception as e:
-        print(f"⚠️ Discovery failed: {e}", flush=True)
-        return ["gemini-2.0-flash", "gemini-1.5-flash"]
-
-# טעינת המודלים
 CURRENT_MODELS = get_clean_models()
 
 LANG_CODES = ["he", "en", "it", "fr", "es", "de", "jp"]
@@ -133,7 +94,8 @@ def extract_json_smart(text):
             return None
         except: return None
 
-def analyze_dynamic_exec(item_title):
+def analyze_content(item_title):
+    """מנסה לנתח עם AI. אם נכשל - מחזיר None (ולא קורס!)"""
     prompt = f"""
     Act as a Fashion Editor. Analyze this news title: "{item_title}".
     Return a JSON object ONLY with:
@@ -155,41 +117,68 @@ def analyze_dynamic_exec(item_title):
             
         except Exception as e:
             err_msg = str(e).lower()
-            if "404" in err_msg:
-                print(f"⚠️ {model_name} skipped (Not Found).", flush=True)
-                continue
             if "429" in err_msg or "quota" in err_msg:
-                print(f"⚠️ {model_name} skipped (Quota).", flush=True)
-                continue
-            
-            print(f"❌ Error with {model_name}: {e}", flush=True)
+                print(f"⚠️ {model_name} Quota full.", flush=True)
+                continue # מנסה את המודל הבא
+            print(f"❌ Error {model_name}: {e}", flush=True)
             continue
 
-    print("🛑 All models exhausted.", flush=True)
-    sys.exit(0)
+    print("🛑 All AI models failed/busy.", flush=True)
+    return None # החזרת None מסמנת לבוט לשמור במצב "טיוטה"
 
-def run_archive_and_cleanup():
-    print("🧹 Cleaning DB...", flush=True)
+def process_pending_articles():
+    """פונקציית התיקון: עוברת על כתבות שפורסמו באנגלית ומנסה לתרגם"""
+    print("🛠️ Checking for pending translations...", flush=True)
     try:
-        now = datetime.utcnow()
-        limit = (now - timedelta(hours=24)).isoformat()
-        supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit).execute()
-    except: pass
+        # שולפים כתבות שצריכות תיקון (עד 2 בכל ריצה כדי לא להעמיס)
+        pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(2).execute()
+        
+        if not pending.data:
+            print("✨ No pending articles found.", flush=True)
+            return
+
+        for item in pending.data:
+            print(f"🔄 Fixing: {item['source_url']}...", flush=True)
+            # לוקחים את הכותרת המקורית מתוך ה-JSON או מהשדה
+            original_title = item.get('titles', {}).get('en', 'News Update')
+            
+            ai_data = analyze_content(original_title)
+            
+            if ai_data:
+                # עדכון הכתבה עם הנתונים החדשים והמלאים
+                supabase.table('news').update({
+                    "category": ai_data.get('category'), 
+                    "titles": ai_data.get('titles'),
+                    "summaries": ai_data.get('summaries'), 
+                    "needs_full_translation": False # זהו, תוקן!
+                }).eq('id', item['id']).execute()
+                print("✅ Fixed successfully!", flush=True)
+                time.sleep(5)
+            else:
+                print("💤 AI still busy, skipping fix.", flush=True)
+                break # אם ה-AI לא עובד, אין טעם לנסות לתקן את השאר
+                
+    except Exception as e:
+        print(f"⚠️ Fix loop error: {e}", flush=True)
 
 def run_bot():
-    print(f"🚀 StyleMe ULTIMATE Engine Active", flush=True)
-    run_archive_and_cleanup()
+    print(f"🚀 StyleMe RESILIENT Engine Active", flush=True)
+    
+    # 1. קודם כל מנסים לתקן ישנים
+    process_pending_articles()
 
+    # 2. מחפשים חדשים
     tasks = []
     rss_samples = random.sample(DIRECT_FEEDS, 2) 
     for f in rss_samples: tasks.append((f, "RSS"))
-        
+    
+    # מוסיפים גם נושאים כדי לגוון
     topic_samples = random.sample(ALL_TOPICS, 2)
     for t in topic_samples: tasks.append((t, "TOPIC"))
         
     random.shuffle(tasks)
     
-    MAX_ARTICLES_PER_RUN = 2
+    MAX_ARTICLES_PER_RUN = 3 # קצת יותר, כי עכשיו יש לנו גיבוי
     items_published = 0
 
     for source, s_type in tasks:
@@ -200,7 +189,7 @@ def run_bot():
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
         
         try:
-            print(f"📥 Checking source...", flush=True)
+            print(f"📥 Checking: {source[:30]}...", flush=True)
             resp = requests.get(url, timeout=10)
             feed = feedparser.parse(resp.content)
             
@@ -212,9 +201,11 @@ def run_bot():
                     print("🔹 Exists.", flush=True)
                     continue
 
-                ai_data = analyze_dynamic_exec(entry.title)
+                # ניסיון לניתוח AI
+                ai_data = analyze_content(entry.title)
                 
                 if ai_data:
+                    # הצלחה! שומרים מלא
                     item = {
                         "source_url": entry.link,
                         "category": ai_data.get('category', 'General'),
@@ -224,14 +215,33 @@ def run_bot():
                         "is_public": True,
                         "created_at": datetime.utcnow().isoformat()
                     }
-                    supabase.table('news').insert(item).execute()
-                    print(f"✅ PUBLISHED: {entry.title[:30]}...", flush=True)
-                    items_published += 1
-                    time.sleep(10) 
+                    print(f"✅ PUBLISHED (AI): {entry.title[:30]}...", flush=True)
+                else:
+                    # כישלון (מכסה נגמרה) -> שומרים במצב 'חירום' (באנגלית)
+                    print(f"⚠️ Saving as RAW DRAFT (Quota empty): {entry.title[:30]}...", flush=True)
+                    item = {
+                        "source_url": entry.link,
+                        "category": "Latest News", # קטגוריה זמנית
+                        "titles": {
+                            "en": entry.title,
+                            "he": entry.title, # שומרים אנגלית גם בשדה העברית בינתיים
+                        },
+                        "summaries": {
+                            "en": "Full analysis coming soon...",
+                            "he": "הניתוח המלא יעלה בקרוב...",
+                        },
+                        "needs_full_translation": True, # מסמנים שצריך לתקן אחר כך
+                        "is_public": True, # מפרסמים מיד!
+                        "created_at": datetime.utcnow().isoformat()
+                    }
                 
-        except SystemExit:
-            raise 
-        except Exception:
+                # שמירה לדאטה בייס (בין אם זה מלא או טיוטה)
+                supabase.table('news').insert(item).execute()
+                items_published += 1
+                time.sleep(5) 
+                
+        except Exception as e:
+            print(f"Error feed: {e}", flush=True)
             continue
 
 if __name__ == "__main__":
