@@ -67,7 +67,7 @@ ALL_TOPICS = [
 DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml"]
 
 def get_live_models():
-    """Discovering one representative per family to avoid loop-quota errors"""
+    """מגלה את כל המודלים הזמינים ומסנן נציג אחד מכל משפחה"""
     try:
         raw_list = [m.name for m in client_ai.models.list() 
                     if "generateContent" in m.supported_actions 
@@ -76,15 +76,20 @@ def get_live_models():
         
         unique_families = {}
         for m in raw_list:
+            # חיתוך השם כדי לזהות את משפחת המודל (למשל gemini-2.0-flash)
             parts = m.split('-')
             family_key = "-".join(parts[:3]) if len(parts) > 2 else m
             if family_key not in unique_families:
                 unique_families[family_key] = m
         
+        # הפיכה לרשימה ומיון (כדי שהחדשים ביותר יהיו למעלה, אך ללא ציון שמות)
         final_list = list(unique_families.values())
-        final_list.sort(key=lambda x: ("2.0" in x, "flash" in x), reverse=True)
+        final_list.sort(reverse=True) 
+        
+        print(f"🤖 Dynamically discovered model families: {final_list}")
         return final_list
-    except: return ["models/gemini-2.0-flash", "models/gemini-1.5-flash"]
+    except:
+        return []
 
 def analyze_dynamic_with_protection(item_title, model_list):
     """Analysis with immediate stop if Google is overloaded"""
