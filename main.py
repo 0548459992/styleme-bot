@@ -8,19 +8,19 @@ import urllib.parse
 from datetime import datetime, timedelta
 import random
 import requests
+import numpy as np
 
 # --- הגדרות מערכת ---
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# שימוש במודל 1.5 פלאש למכסה מקסימלית בחינם (1,500 ליום)
 MODEL_NAME = "gemini-2.0-flash"
+EMBEDDING_MODEL = "text-embedding-004"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# רשימת 20 השפות לתמיכה גלובלית
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
 
 # --- בנק המקורות הישירים ---
@@ -37,7 +37,7 @@ DIRECT_FEEDS = [
     "https://www.ecotextile.com/news?format=feed&type=rss"
 ]
 
-# --- בנק 110 הנושאים המלא ---
+# --- בנק 110 הנושאים המלא (The Intelligence Bank) ---
 ALL_TOPICS = [
     "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026", "Runway Color Forecast 2027",
     "Minimalist Fashion Movement", "Cyberpunk & Techwear Aesthetics", "Sustainable Couture Techniques",
@@ -94,113 +94,93 @@ def update_ai_budget(count):
     current = get_ai_budget()
     supabase.table('ai_budget').update({"requests_today": current + count}).eq('id', 1).execute()
 
-def analyze_multilingual(item, budget):
-    # המתנה קצרה למניעת חסימת RPM במסלול החינמי
-    time.sleep(15)
-    
-    # מכסה של 1500 ליום מאפשרת לנו לעבוד בחופשיות יחסית
-    if budget < 1400:
-        target_langs = LANG_CODES if budget < 1000 else ["he", "en", "it", "fr", "zh", "tr"]
-        needs_more = budget >= 1000
-    else:
-        return None, True
+def get_embedding(text):
+    try:
+        res = client_ai.models.embed_content(model=EMBEDDING_MODEL, contents=text)
+        return res.embeddings[0].values
+    except: return None
 
-    prompt = f"""
-    Analyze this news: {item.title}
-    1. Categorize exactly as one of: TRENDS, MARKET, TECH, LOGISTICS, REGULATION.
-    2. Provide a professional 2-sentence summary for each code: {', '.join(target_langs)}.
-    Return ONLY a valid JSON object:
-    {{
-      "category": "...",
-      "titles": {{"he": "...", "en": "...", ...}},
-      "summaries": {{"he": "...", "en": "...", ...}}
-    }}
-    """
+def analyze_multilingual(item, budget):
+    time.sleep(15)
+    if budget >= 1450: return None, True
+    target_langs = LANG_CODES if budget < 1000 else ["he", "en", "it", "fr", "zh", "tr"]
+    needs_more = budget >= 1000
+
+    prompt = f"Analyze news and return JSON (titles/summaries in {target_langs}): {item.title}"
     try:
         res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
         clean_json = res.text.strip().replace("```json", "").replace("```", "")
         return json.loads(clean_json), needs_more
-    except Exception as e:
-        print(f"AI Error: {e}")
-        return None, True
+    except: return None, True
 
 def run_bot():
     budget = get_ai_budget()
-    print(f"🚀 StyleMe Global Engine (Broad Scan Mode). Budget: {budget}/1500")
+    print(f"🚀 StyleMe Smart Engine. Full Scan Mode. Budget: {budget}/1500")
     
+    # שליפת וקטורים למניעת כפילויות סמנטיות
+    yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
+    recent_news = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
+    existing_embeddings = [np.array(item['embedding']) for item in recent_news.data if item['embedding']]
+
     items_to_publish = []
-    
-    # הגרלת משימות מהבנק
     selected_feeds = random.sample(DIRECT_FEEDS, min(6, len(DIRECT_FEEDS)))
-    selected_topics = random.sample(ALL_TOPICS, min(12, len(ALL_TOPICS)))
+    selected_topics = random.sample(ALL_TOPICS, min(15, len(ALL_TOPICS)))
     tasks = [(f, "RSS") for f in selected_feeds] + [(t, "TOPIC") for t in selected_topics]
     random.shuffle(tasks)
 
     for source, s_type in tasks:
         if len(items_to_publish) >= 15: break
-        
-        if s_type == "TOPIC":
-            search_lang = random.choice(["en", "it", "fr", "zh", "tr"])
-            encoded_query = urllib.parse.quote(source)
-            url = f"https://news.google.com/rss/search?q={encoded_query}&hl={search_lang}&gl={search_lang.upper()}&ceid={search_lang.upper()}:en"
-        else:
-            url = source
+        url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
 
         try:
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
             feed = feedparser.parse(resp.content)
-            
-            # סורקים את כל הפיד כדי לא לפספס כלום
             for entry in feed.entries:
                 if len(items_to_publish) >= 15: break
                 
-                # בדיקת כפילות ב-DB - מהיר וחינמי
                 existing = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if existing.data: continue
 
-                # רק ידיעה חדשה באמת עוברת לניתוח AI
+                new_vector = get_embedding(entry.title)
+                if new_vector is not None:
+                    new_vector_np = np.array(new_vector)
+                    is_semantic_duplicate = False
+                    for old_vector in existing_embeddings:
+                        similarity = np.dot(new_vector_np, old_vector) / (np.linalg.norm(new_vector_np) * np.linalg.norm(old_vector))
+                        if similarity > 0.88:
+                            is_semantic_duplicate = True
+                            break
+                    if is_semantic_duplicate: continue
+
                 ai_data, needs_more = analyze_multilingual(entry, budget)
-                
                 if ai_data:
                     items_to_publish.append({
                         "source_url": entry.link,
                         "category": ai_data.get('category', 'TRENDS'),
                         "titles": ai_data.get('titles', {"en": entry.title}),
                         "summaries": ai_data.get('summaries', {}),
+                        "embedding": new_vector.tolist() if new_vector is not None else None,
                         "needs_full_translation": needs_more,
                         "is_public": True
                     })
                     budget += 1
                 else:
-                    # שמירה גולמית אם ה-AI בחיסכון או תקול - למניעת פספוסים
                     items_to_publish.append({
                         "source_url": entry.link,
                         "titles": {"en": entry.title},
-                        "summaries": {"en": "AI summary in progress..."},
+                        "embedding": new_vector.tolist() if new_vector is not None else None,
                         "needs_full_translation": True,
                         "is_public": True
                     })
-        except Exception as e:
-            print(f"Error processing {url[:30]}: {e}")
-            continue
+        except: continue
 
-    # --- DRIP FEEDING ---
     if items_to_publish:
-        print(f"🕒 Scheduling {len(items_to_publish)} items over 28 minutes...")
-        interval = 28 / len(items_to_publish) if len(items_to_publish) > 1 else 0
+        interval = 28 / len(items_to_publish)
         start_time = datetime.utcnow()
-
         for i, item in enumerate(items_to_publish):
-            scheduled_time = start_time + timedelta(minutes=i * interval)
-            item["created_at"] = scheduled_time.isoformat()
-            try:
-                supabase.table('news').insert(item).execute()
-                print(f"✅ Scheduled: {scheduled_time.strftime('%H:%M:%S')} | {list(item['titles'].values())[0][:30]}")
-            except: pass
-
+            item["created_at"] = (start_time + timedelta(minutes=i * interval)).isoformat()
+            supabase.table('news').insert(item).execute()
         update_ai_budget(len(items_to_publish))
-    else:
-        print("😴 No new items found.")
 
 if __name__ == "__main__":
     run_bot()
