@@ -28,7 +28,52 @@ except Exception as e:
     print(f"❌ Connection Error: {e}")
     sys.exit(1)
 
-# --- הגדרות תוכן ---
+# --- פונקציה דינמית חכמה ---
+def get_dynamic_models():
+    """
+    מושך את כל המודלים מגוגל בזמן אמת,
+    אבל מסנן רק את אלו שמתאימים לשימוש חינמי (Flash)
+    """
+    try:
+        print("📡 Asking Google for available models...")
+        # 1. שליפת כל המודלים
+        all_models = list(client_ai.models.list())
+        
+        valid_models = []
+        for m in all_models:
+            name = m.name.lower()
+            # 2. סינון קפדני
+            # חייב להיות מודל ג'מיני
+            if "gemini" not in name: continue
+            # חייב לתמוך ביצירת תוכן
+            if "generateContent" not in m.supported_actions: continue
+            # אסור שיהיה מודל ראייה בלבד
+            if "vision" in name: continue
+            
+            # --- הכלל הכי חשוב: רק FLASH ---
+            # אנחנו מסננים החוצה את Pro/Ultra כי הם גומרים את המכסה מיד
+            if "flash" in name:
+                valid_models.append(m.name)
+
+        # 3. מיון: שמים את גרסה 2.0 למעלה, ואת גרסאות ה-8b (הקלות) בסוף
+        # המיון הוא הפוך כדי שהמספרים הגבוהים (2.0) יהיו ראשונים
+        valid_models.sort(reverse=True)
+        
+        print(f"✅ Discovered {len(valid_models)} Flash models: {valid_models}")
+        
+        if not valid_models:
+            # גיבוי למקרה חירום שמשהו השתנה בפורמט השמות
+            return ["gemini-2.0-flash", "gemini-1.5-flash"]
+            
+        return valid_models
+
+    except Exception as e:
+        print(f"⚠️ Dynamic discovery failed: {e}. Using fallback.")
+        return ["gemini-2.0-flash", "gemini-1.5-flash"]
+
+# טוענים את המודלים פעם אחת בתחילת הריצה
+CURRENT_MODELS = get_dynamic_models()
+
 LANG_CODES = ["he", "en", "it", "fr", "es", "de", "jp"]
 
 DIRECT_FEEDS = [
@@ -77,8 +122,8 @@ def extract_json_smart(text):
             return None
         except: return None
 
-def analyze_polite_mode(item_title):
-    """ניתוח מנומס - אם אין מכסה, עוצרים מיד"""
+def analyze_dynamic_fallback(item_title):
+    """משתמש ברשימה הדינמית שמצאנו"""
     prompt = f"""
     Act as a Fashion Editor. Analyze this news title: "{item_title}".
     Return a JSON object ONLY with:
@@ -88,27 +133,31 @@ def analyze_polite_mode(item_title):
     Return JSON only.
     """
     
-    # מנסים את המודל החדש והמהיר
-    model = "gemini-2.0-flash"
-    
-    try:
-        print(f"🧠 Asking Google AI...")
-        response = client_ai.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        return extract_json_smart(response.text)
+    # עובר על הרשימה הדינמית
+    for model_name in CURRENT_MODELS:
+        try:
+            print(f"🧠 Trying dynamic model: {model_name}...")
+            response = client_ai.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            return extract_json_smart(response.text)
             
-    except Exception as e:
-        err_msg = str(e).lower()
-        if "429" in err_msg or "quota" in err_msg or "resource_exhausted" in err_msg:
-            print("🛑 DAILY QUOTA REACHED. Stopping bot to save energy.")
-            print("👋 See you in 30 minutes!")
-            sys.exit(0) # יציאה מסודרת מהתוכנית - לא שגיאה!
-        else:
-            print(f"⚠️ API Error: {e}")
-            return None
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "404" in err_msg:
+                print(f"⚠️ {model_name} not found (weird for dynamic list). Next...")
+                continue
+            if "429" in err_msg or "quota" in err_msg:
+                print(f"⚠️ {model_name} Quota full. Trying next...")
+                continue
+            
+            print(f"❌ Error: {e}")
+            continue
+
+    print("🛑 All dynamic models failed.")
+    sys.exit(0)
 
 def run_archive_and_cleanup():
     print("🧹 Cleaning old database entries...")
@@ -119,11 +168,10 @@ def run_archive_and_cleanup():
     except: pass
 
 def run_bot():
-    print(f"🚀 StyleMe 'Polite' Engine Active")
+    print(f"🚀 StyleMe DYNAMIC Engine Active")
     run_archive_and_cleanup()
 
     tasks = []
-    # מגרילים משימות
     rss_samples = random.sample(DIRECT_FEEDS, 2) 
     for f in rss_samples: tasks.append((f, "RSS"))
         
@@ -132,13 +180,12 @@ def run_bot():
         
     random.shuffle(tasks)
     
-    # מגבלה קשיחה - 2 כתבות לריצה עד שהמצב יתייצב
     MAX_ARTICLES_PER_RUN = 2
     items_published = 0
 
     for source, s_type in tasks:
         if items_published >= MAX_ARTICLES_PER_RUN: 
-            print("🏁 Daily batch limit reached. Done for now.")
+            print("🏁 Batch done.")
             break 
         
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
@@ -153,11 +200,10 @@ def run_bot():
                 
                 exists = supabase.table('news').select("id").eq('source_url', entry.link).execute()
                 if exists.data:
-                    print("🔹 Article already exists.")
+                    print("🔹 Exists.")
                     continue
 
-                # כאן הקסם קורה - אם אין מכסה, התוכנית תעצור כאן
-                ai_data = analyze_polite_mode(entry.title)
+                ai_data = analyze_dynamic_fallback(entry.title)
                 
                 if ai_data:
                     item = {
@@ -175,7 +221,7 @@ def run_bot():
                     time.sleep(10) 
                 
         except SystemExit:
-            raise # נותן ליציאה לקרות
+            raise 
         except Exception:
             continue
 
