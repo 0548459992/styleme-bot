@@ -58,7 +58,7 @@ ALL_TOPICS = [
     "Global Fashion Retail Growth 2026", "Global Fashion Retail Growth 2027", "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
     "Raw Material Price Volatility", "Logistics Shipping Port Delay", "Air Freight Trends for Fashion",
     "Resale & Circular Economy Growth", "Clothing Rental Subscription Models", "Direct-to-Consumer Strategy News",
-    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hub hubs Ethiopia",
+    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hubs Ethiopia",
     "Post-Fast Fashion Business Models", "Merchandising Planning AI Software", "Impact of Inflation on Fashion",
     "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth", "Turkey Apparel Manufacturing News",
     "Global Cotton Stock Index", "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
@@ -123,8 +123,14 @@ def run_bot():
         print(f"🔄 Processing {len(pending.data)} pending items...")
         for item in pending.data:
             if budget >= 1450: break
-            title_to_analyze = list(item['titles'].values())[0]
+            
+            # שליפת כותרת בטוחה מתוך אובייקט ה-JSON
+            title_obj = item.get('titles', {})
+            title_to_analyze = next(iter(title_obj.values())) if title_obj else "Unknown Title"
+            
+            print(f"🧐 Analyzing pending: {title_to_analyze[:30]}...")
             ai_data, needs_more = analyze_multilingual(title_to_analyze, budget)
+            
             if ai_data:
                 supabase.table('news').update({
                     "category": ai_data.get('category'),
@@ -134,6 +140,7 @@ def run_bot():
                 }).eq('id', item['id']).execute()
                 budget += 1
                 update_ai_budget(1)
+                print(f"✅ Successfully updated: {item['id']}")
 
     # --- שלב 2: סריקה חדשה ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
