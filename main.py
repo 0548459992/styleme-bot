@@ -15,8 +15,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# עדכון שם המודל לגרסה נתמכת ויציבה
-MODEL_NAME = "gemini-1.5-flash-002" 
+# שם המודל התקני ביותר לספריית genai
+MODEL_NAME = "gemini-1.5-flash" 
 EMBEDDING_MODEL = "text-embedding-004"
 
 client_ai = genai.Client(api_key=GEMINI_API_KEY)
@@ -109,6 +109,7 @@ def analyze_and_translate(item_title, budget):
     for attempt in range(2):
         try:
             print(f"📡 Sending to AI (Attempt {attempt+1}): {item_title[:30]}...")
+            # שימוש בשם המודל ללא קידומת models/
             res = client_ai.models.generate_content(model=MODEL_NAME, contents=prompt)
             text = res.text.strip().replace("```json", "").replace("```", "")
             return json.loads(text)
@@ -130,7 +131,7 @@ def run_bot():
         if pending.data:
             item = pending.data[0]
             t_obj = item.get('titles', {})
-            title = next(iter(t_obj.values())) if t_obj else "Fashion Update"
+            title = next(iter(title_obj.values())) if t_obj else "Fashion Update"
             print(f"🔄 Catching up: {title[:30]}")
             ai_data = analyze_and_translate(title, budget)
             if ai_data:
