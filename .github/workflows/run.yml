@@ -1,4 +1,4 @@
-name: StyleMe Production
+name: StyleMe Brute Force
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15 # אם זה לא עובד תוך 15 דקות, זה לא יעבוד בכלל
 
     steps:
       - name: Checkout Code
@@ -17,22 +17,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # גרסה 3.10 יציבה יותר לערבוב ישן/חדש
-          cache: 'pip'
+          python-version: '3.10' 
 
-      # שלב 1: התקנת הספריות הכבדות והחדשות
-      - name: Install Core Libraries
+      - name: Install Dependencies Manually
         run: |
           python -m pip install --upgrade pip
-          pip install google-genai supabase requests
+          
+          # 1. מתקינים את הספריות ה"קלות" קודם
+          pip install requests supabase
+          
+          # 2. מתקינים את הרכיב החסר של ה-RSS ידנית
+          pip install sgmllib3k
+          
+          # 3. מתקינים את feedparser בכוח, בלי לבדוק תלויות (כי התקנו אותן הרגע)
+          pip install feedparser --no-deps
+          
+          # 4. מתקינים את גוגל אחרון, גם כן בלי לבדוק תלויות של אחרים
+          pip install google-genai
 
-      # שלב 2: התקנת הספרייה הבעייתית בנפרד (עם העוזר שלה)
-      - name: Install RSS Parser
-        run: |
-          pip install sgmllib3k 
-          pip install feedparser
-
-      # שלב 3: הרצת הבוט
       - name: Run Bot
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
