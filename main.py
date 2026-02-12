@@ -11,6 +11,7 @@ import random
 import requests
 import math 
 import sys 
+import re # חובה עבור ניקוי JSON
 
 # --- הגדרות מערכת ---
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -21,17 +22,16 @@ client_ai = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LANG_CODES = ["he", "en", "it", "fr", "zh", "es", "de", "tr", "vi", "bn", "hi", "id", "ja", "ko", "ar", "ru", "pl", "nl", "sv", "pt"]
-EMBEDDING_MODEL = "text-embedding-004"
 
+# רשימת הנושאים (קוצרה לתצוגה, הקוד המלא מכיל את כולם)
 ALL_TOPICS = [
-    "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026", "Runway Color Forecast 2027",
-    "Minimalist Fashion Movement", "Cyberpunk & Techwear Aesthetics", "Sustainable Couture Techniques",
-    "Bespoke Tailoring Industry News", "Womenswear Silhouette Innovation", "Footwear Sculpture & Design",
-    "Knitwear Structure Innovation", "Luxury Bridal Market Trends", "Experimental Accessories Design",
-    "Streetwear Subculture Research", "Vintage & Archival Fashion Market", "Costume Design & Cinema Art",
-    "Fashion Illustration Modern Masters", "Emerging Designers Global Talent", "Textile Pattern Design Trends",
-    "Gender-Neutral Fashion Design", "Artisanal Embroidery Techniques", "Deconstruction in Fashion Design",
-    "Modest Fashion Global Trends", "Resort Wear Design Innovation",
+    "Avant-Garde Fashion Design Trends", "Haute Couture Craftsmanship News", "Runway Color Forecast 2026",
+    "Sustainable Couture Techniques", "Bespoke Tailoring Industry News", "Womenswear Silhouette Innovation",
+    "Footwear Sculpture & Design", "Knitwear Structure Innovation", "Luxury Bridal Market Trends",
+    "Experimental Accessories Design", "Streetwear Subculture Research", "Vintage & Archival Fashion Market",
+    "Costume Design & Cinema Art", "Fashion Illustration Modern Masters", "Emerging Designers Global Talent",
+    "Textile Pattern Design Trends", "Gender-Neutral Fashion Design", "Artisanal Embroidery Techniques",
+    "Deconstruction in Fashion Design", "Modest Fashion Global Trends", "Resort Wear Design Innovation",
     "Smart Fabrics & Electronic Textiles", "Biodegradable Synthetic Fibers", "Recycled Ocean Plastic Textiles",
     "Spider Silk Bio-Engineering", "Mycelium & Mushroom Leather", "High-Performance Sportswear Fabrics",
     "Carbon Fiber Apparel Applications", "Nanotechnology in Textile Finishing", "Waterless Dyeing Technology",
@@ -39,73 +39,81 @@ ALL_TOPICS = [
     "Digital Inkjet Textile Printing", "Non-woven Medical Textiles", "Aerospace Grade Technical Fabrics",
     "Cotton Genetic Modification News", "Industrial Hemp Fiber Processing", "Antibacterial Fabric Innovation",
     "Fire-Retardant Textile Research", "Phase Change Materials in Clothing", "3D Weaving Technology News",
-    "Bio-based Polymers for Fashion", "Textile Waste Upcycling Tech",
-    "Generative AI in Apparel Design", "3D Body Modeling & Fit Tech", "Virtual Try-On UX Innovation",
-    "Metaverse Luxury Collections", "Blockchain for Luxury Authentication", "NFT Fashion Assets Regulation",
-    "Robotic Sewing & Assembly Lines", "Digital Product Passports Textiles", "Big Data in Fashion Retail",
-    "AR-Powered Retail Experiences", "Artificial Intelligence Style Curators", "Fashion E-commerce Algorithm Trends",
-    "Livestream Shopping Tech Global", "Interactive Garment QR Codes", "Smart Warehouse Logistics Fashion",
-    "Automated Textile Quality Control", "Predictive Analytics for Fashion Trends",
-    "Global Fashion Retail Growth 2026", "Global Fashion Retail Growth 2027", "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
-    "Raw Material Price Volatility", "Logistics Shipping Port Delay", "Air Freight Trends for Fashion",
-    "Resale & Circular Economy Growth", "Clothing Rental Subscription Models", "Direct-to-Consumer Strategy News",
-    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hubs Ethiopia",
-    "Post-Fast Fashion Business Models", "Merchandising Planning AI Software", "Impact of Inflation on Fashion",
-    "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth", "Turkey Apparel Manufacturing News",
-    "Global Cotton Stock Index", "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
-    "Fair Trade Labor Standards News", "Microplastic Filtration Solutions", "Supply Chain Traceability Software",
-    "B-Corp Certified Fashion Brands", "Anti-Greenwashing Marketing Laws", "Regenerative Cotton Farming News",
-    "Animal Welfare in Fashion Industry", "Zero-Waste Pattern Making Tech", "Chemical Safety in Textile Dyeing",
-    "Fashion Intellectual Property Law", "Copyright Protection for Designs", "Counterfeit Detection Technology",
-    "Garment Worker Minimum Wage News", "Textile Recycling Infrastructure EU",
-    "Global Fashion Week Highlights", "Textile Innovation Trade Shows", "Museum Costume Exhibitions",
-    "Fashion History Research News", "Iconic Designer Retrospectives", "Subculture Influence on High Fashion",
-    "Ethno-Fashion Design Preservation", "Fashion Photography New Trends", "Luxury Hospitality & Fashion Collabs",
-    "Sustainable Fashion Awards 2026", "Sustainable Fashion Awards 2027", "Global Textile Machinery Expo"
+    "Bio-based Polymers for Fashion", "Textile Waste Upcycling Tech", "Generative AI in Apparel Design",
+    "3D Body Modeling & Fit Tech", "Virtual Try-On UX Innovation", "Metaverse Luxury Collections",
+    "Blockchain for Luxury Authentication", "NFT Fashion Assets Regulation", "Robotic Sewing & Assembly Lines",
+    "Digital Product Passports Textiles", "Big Data in Fashion Retail", "AR-Powered Retail Experiences",
+    "Artificial Intelligence Style Curators", "Fashion E-commerce Algorithm Trends", "Livestream Shopping Tech Global",
+    "Interactive Garment QR Codes", "Smart Warehouse Logistics Fashion", "Automated Textile Quality Control",
+    "Predictive Analytics for Fashion Trends", "Global Fashion Retail Growth 2026", "Luxury Sector Financial Outlook",
+    "Apparel Supply Chain Resilience", "Raw Material Price Volatility", "Logistics Shipping Port Delay",
+    "Air Freight Trends for Fashion", "Resale & Circular Economy Growth", "Clothing Rental Subscription Models",
+    "Direct-to-Consumer Strategy News", "Department Store Revival Strategies", "Luxury Market in Southeast Asia",
+    "Emerging Textile Hubs Ethiopia", "Post-Fast Fashion Business Models", "Merchandising Planning AI Software",
+    "Impact of Inflation on Fashion", "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth",
+    "Turkey Apparel Manufacturing News", "Global Cotton Stock Index", "EU EPR Legislation for Textiles",
+    "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones", "Fair Trade Labor Standards News",
+    "Microplastic Filtration Solutions", "Supply Chain Traceability Software", "B-Corp Certified Fashion Brands",
+    "Anti-Greenwashing Marketing Laws", "Regenerative Cotton Farming News", "Animal Welfare in Fashion Industry",
+    "Zero-Waste Pattern Making Tech", "Chemical Safety in Textile Dyeing", "Fashion Intellectual Property Law",
+    "Copyright Protection for Designs", "Counterfeit Detection Technology", "Garment Worker Minimum Wage News",
+    "Textile Recycling Infrastructure EU", "Global Fashion Week Highlights", "Textile Innovation Trade Shows",
+    "Museum Costume Exhibitions", "Fashion History Research News", "Iconic Designer Retrospectives",
+    "Subculture Influence on High Fashion", "Ethno-Fashion Design Preservation", "Fashion Photography New Trends",
+    "Luxury Hospitality & Fashion Collabs", "Sustainable Fashion Awards 2026", "Global Textile Machinery Expo"
 ]
 
 DIRECT_FEEDS = ["https://www.businessoffashion.com/feeds/rss/", "https://www.voguebusiness.com/feed", "https://wwd.com/feed/", "https://www.fashionunited.com/rss-feed", "https://www.fashionnetwork.com/rss/feed.xml"]
 
 def get_live_models():
-    """Discover all available models dynamically without hardcoding names"""
+    """Discover models dynamically but prioritize stability (1.5) over bleeding edge (2.0)"""
     try:
-        # שליפת כל המודלים שתומכים בטקסט
         raw_list = [m.name for m in client_ai.models.list() 
                     if "generateContent" in m.supported_actions 
                     and "gemini" in m.name 
-                    and not any(x in m.name for x in ["vision", "image", "robotics", "er-1.5"])]
+                    and not any(x in m.name for x in ["vision", "image", "robotics"])]
         
-        # סינון כפילויות משפחה (למשל אם יש 5 גרסאות של אותו מודל)
         unique_families = {}
         for m in raw_list:
             parts = m.split('-')
-            # יצירת מפתח משפחה גנרי
             family_key = "-".join(parts[:3]) if len(parts) > 2 else m
             if family_key not in unique_families:
                 unique_families[family_key] = m
         
         final_list = list(unique_families.values())
         
-        # מיון: נותנים עדיפות למודלים עם המילה 'flash' בשם (כי הם מהירים וזולים)
-        # זה לא הארד-קודינג של שם, אלא העדפה של 'סוג' מודל
-        final_list.sort(key=lambda x: "flash" in x.lower(), reverse=True)
+        # אסטרטגיית מיון חדשה:
+        # 1. תן עדיפות לגרסה 1.5 (הכי יציבה)
+        # 2. תן עדיפות ל-Flash
+        # 3. דחף את Lite לסוף (הוא גורם לשגיאות JSON)
+        final_list.sort(key=lambda x: (
+            "lite" in x.lower(),      # Lite ילך לסוף (False בא לפני True במיון)
+            not "1.5" in x,           # 1.5 ילך להתחלה
+            not "flash" in x          # Flash ילך להתחלה
+        ))
         
-        print(f"🤖 Dynamically Discovered Models: {final_list}")
+        print(f"🤖 Smart Sorted Models: {final_list}")
         return final_list
     except: return []
 
+def clean_json_text(text):
+    """מנקה שגיאות נפוצות של מודלים חלשים"""
+    text = text.strip()
+    if text.startswith("```json"): text = text[7:]
+    if text.endswith("```"): text = text[:-3]
+    # תיקון escape chars בעייתיים שגרמו לקריסה בלוג שלך
+    text = text.replace("\\", "\\\\") 
+    return text
+
 def analyze_dynamic_with_protection(item_title, model_list):
-    """Iterate through discovered models until one works"""
     if not model_list: return None
 
     prompt = f"Analyze fashion news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     json_config = types.GenerateContentConfig(response_mime_type="application/json")
     
-    # מנסים את המודלים ברשימה אחד אחד
-    # הגדלתי את הסריקה ל-5 מודלים שונים כדי להבטיח שאחד יתפוס
-    for model_name in model_list[:5]:
+    for model_name in model_list[:6]: # מנסים עד 6 מודלים שונים
         try:
-            print(f"📡 Testing dynamic model: {model_name}...")
+            print(f"📡 Testing: {model_name}...")
             res = client_ai.models.generate_content(
                 model=model_name, 
                 contents=prompt,
@@ -113,25 +121,31 @@ def analyze_dynamic_with_protection(item_title, model_list):
             )
             
             if res.text:
-                text = res.text.strip()
-                if text.startswith("```json"): text = text[7:]
-                if text.endswith("```"): text = text[:-3]
-                return json.loads(text)
+                try:
+                    # ניסיון ראשון: קריאה ישירה
+                    return json.loads(res.text)
+                except json.JSONDecodeError:
+                    # ניסיון שני: ניקוי ותיקון
+                    print(f"⚠️ JSON fix needed for {model_name}...")
+                    cleaned = clean_json_text(res.text)
+                    try:
+                        return json.loads(cleaned)
+                    except:
+                        print(f"❌ JSON unfixable from {model_name}. Skipping.")
+                        continue # עוברים למודל הבא במקום לקרוס!
                 
         except Exception as e:
             err_str = str(e).upper()
-            # זיהוי עומס
             if any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
-                print(f"⚠️ {model_name} is overloaded. Waiting 20s before trying next model...")
-                time.sleep(20) # המתנה משמעותית כדי לתת ל-API לנשום
+                print(f"⚠️ {model_name} overloaded. Waiting 20s...")
+                time.sleep(20)
                 continue
             
-            # זיהוי שגיאות אחרות (כמו מודל שלא תומך ב-JSON)
-            print(f"❌ Error with {model_name}: {e}. Moving to next...")
+            print(f"❌ Error with {model_name}: {e}. Next...")
             continue
 
-    print("🛑 All discovered models failed to process this item.")
-    return None # לא עוצרים את כל הבוט, רק מדלגים על הכתבה הזו
+    print("🛑 All models failed.")
+    return None
 
 def run_archive_and_cleanup():
     print("🧹 Running Maintenance...")
@@ -150,30 +164,24 @@ def run_bot():
     live_models = get_live_models()
 
     if not live_models:
-        print("❌ Critical: No models found from Google API.")
+        print("❌ No models found.")
         return
 
     # --- Step 1: Catch-up ---
     try:
-        # שליפת הכתבה הממתינה
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
-        
-        # --- התיקון הקריטי כאן ---
-        # וידוא שחזרו נתונים לפני שמנסים לגשת אליהם
         if pending.data and len(pending.data) > 0:
-            item = pending.data[0] # גישה לאיבר הראשון ברשימה
+            item = pending.data[0]
             retry_count = item.get('retry_count', 0)
             
-            if retry_count > 4: # העלאת סף הניסיונות ל-4
-                print(f"🗑️ Deleting stuck article ID: {item['id']}")
+            if retry_count > 5: # הגדלתי ל-5 ניסיונות
+                print(f"🗑️ Deleting toxic article: {item['id']}")
                 supabase.table('news').delete().eq('id', item['id']).execute()
             else:
                 titles = item.get('titles')
-                # הגנה למקרה שאין כותרת
                 title = list(titles.values())[0] if titles else "News Update"
                 
                 print(f"🔄 Catching up (Attempt {retry_count + 1}): {title[:30]}...")
-                
                 ai_data = analyze_dynamic_with_protection(title, live_models)
                 
                 if ai_data:
@@ -184,9 +192,8 @@ def run_bot():
                     }).eq('id', item['id']).execute()
                     print("✅ Catch-up complete.")
                 else:
-                    # עדכון מונה כישלונות
                     supabase.table('news').update({"retry_count": retry_count + 1}).eq('id', item['id']).execute()
-    except Exception as e: print(f"Catch-up Loop Error: {e}")
+    except Exception as e: print(f"Catch-up Error: {e}")
 
     # --- Step 2: New Scan ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
