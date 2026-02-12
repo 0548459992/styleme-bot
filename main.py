@@ -48,7 +48,7 @@ ALL_TOPICS = [
     "Global Fashion Retail Growth 2026", "Global Fashion Retail Growth 2027", "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
     "Raw Material Price Volatility", "Logistics Shipping Port Delay", "Air Freight Trends for Fashion",
     "Resale & Circular Economy Growth", "Clothing Rental Subscription Models", "Direct-to-Consumer Strategy News",
-    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hub hubs Ethiopia",
+    "Department Store Revival Strategies", "Luxury Market in Southeast Asia", "Emerging Textile Hubs Ethiopia",
     "Post-Fast Fashion Business Models", "Merchandising Planning AI Software", "Impact of Inflation on Fashion",
     "Apparel Sourcing Strategy Vietnam", "India Textile Export Growth", "Turkey Apparel Manufacturing News",
     "Global Cotton Stock Index", "EU EPR Legislation for Textiles", "Fashion Carbon Footprint Metrics", "Water Scarcity in Textile Zones",
@@ -75,24 +75,33 @@ def cosine_similarity(v1, v2):
     except: return 0
 
 def get_live_models():
-    """גילוי דינמי של מודלים מורשים עם סינון מודלים לא רלוונטיים"""
+    """גילוי דינמי של מודלים מורשים עם סינון מודלים לא רלוונטיים ומניעת כפילויות משפחה"""
     try:
-        models = [m.name for m in client_ai.models.list() 
-                  if "generateContent" in m.supported_actions 
-                  and "gemini" in m.name 
-                  and not any(x in m.name for x in ["vision", "image", "robotics", "er-1.5"])]
-        # תיעוד סדר העדיפות: 2.0 פלאש קודם, אחר כך השאר
-        models.sort(key=lambda x: ("2.0" in x, "flash" in x), reverse=True)
-        print(f"🤖 Dynamically approved models: {models[:5]}")
-        return models
-    except: return ["models/gemini-2.0-flash"]
+        raw_list = [m.name for m in client_ai.models.list() 
+                    if "generateContent" in m.supported_actions 
+                    and "gemini" in m.name 
+                    and not any(x in m.name for x in ["vision", "image", "robotics", "er-1.5"])]
+        
+        # סינון לנציג אחד מכל משפחה למניעת לופים של 429
+        unique_families = {}
+        for m in raw_list:
+            parts = m.split('-')
+            family_key = "-".join(parts[:3]) if len(parts) > 2 else m
+            if family_key not in unique_families:
+                unique_families[family_key] = m
+        
+        final_list = list(unique_families.values())
+        final_list.sort(key=lambda x: ("2.0" in x, "flash" in x), reverse=True)
+        print(f"🤖 Dynamically approved families: {final_list[:5]}")
+        return final_list
+    except: return ["models/gemini-2.0-flash", "models/gemini-1.5-flash"]
 
 def analyze_dynamic_with_protection(item_title, model_list):
-    """ניתוח AI עם הגנת עומס ודילוג בין מודלים"""
+    """ניתוח AI עם הגנת עומס ודילוג בין משפחות מודלים"""
     time.sleep(15) 
     prompt = f"Analyze news and return JSON (titles/summaries in {LANG_CODES}): {item_title}"
     
-    # ניסיון של 3 המודלים הטובים ביותר למניעת Timeouts
+    # ניסיון של עד 3 משפחות שונות בלבד
     for model_name in model_list[:3]:
         try:
             print(f"📡 Requesting {model_name}...")
@@ -102,8 +111,8 @@ def analyze_dynamic_with_protection(item_title, model_list):
                 return json.loads(text)
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print(f"⚠️ {model_name} quota hit. Waiting 12s...")
-                time.sleep(12)
+                print(f"⚠️ {model_name} quota hit. Waiting 10s and skipping family...")
+                time.sleep(10)
                 continue
             print(f"❌ {model_name} Error: {e}")
     return None
@@ -112,27 +121,20 @@ def run_archive_and_cleanup():
     """תחזוקת ארכיון: מחיקת שבורים (חוכמת המונים) וניקוי זבל"""
     print("🧹 Running Maintenance...")
     now = datetime.utcnow()
-    
-    # 1. מחיקת כתבות שדווחו כחסרות ע"י 2 משתמשים שונים
     try:
+        # 1. מחיקת כתבות שדווחו כחסרות ע"י 2 משתמשים
         supabase.table('news').delete().gte('missing_reports', 2).execute()
-    except: pass
-
-    # 2. מחיקת טיוטות (Needs Translation) שעברו 48 שעות
-    limit_48h = (now - timedelta(days=2)).isoformat()
-    try:
+        # 2. מחיקת טיוטות שעברו 48 שעות
+        limit_48h = (now - timedelta(days=2)).isoformat()
         supabase.table('news').delete().eq('needs_full_translation', True).lt('created_at', limit_48h).execute()
     except: pass
 
 def run_bot():
-    print(f"🚀 StyleMe Pro Engine. Intelligence Broad Scan.")
-    
-    # הפעלת תחזוקה בתחילת כל ריצה
+    print(f"🚀 StyleMe Autonomous Engine. Broad Scan Mode.")
     run_archive_and_cleanup()
-    
     live_models = get_live_models()
 
-    # --- שלב 1: Catch-up ---
+    # --- Step 1: Catch-up ---
     try:
         pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(1).execute()
         if pending.data:
@@ -146,10 +148,9 @@ def run_bot():
                     "category": ai_data.get('category'), "titles": ai_data.get('titles'),
                     "summaries": ai_data.get('summaries'), "needs_full_translation": False
                 }).eq('id', item['id']).execute()
-                print("✅ Catch-up complete.")
     except Exception as e: print(f"Catch-up Err: {e}")
 
-    # --- שלב 2: סריקה חדשה ---
+    # --- Step 2: New Scan ---
     yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
     try:
         recent = supabase.table('news').select('embedding').gte('created_at', yesterday).execute()
@@ -162,34 +163,26 @@ def run_bot():
     random.shuffle(tasks)
 
     for source, s_type in tasks:
-        if len(items_to_publish) >= 15: break
+        if len(items_to_publish) >= 12: break
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
         try:
             resp = requests.get(url, timeout=12)
             feed = feedparser.parse(resp.content)
-            for entry in feed.entries:
-                if len(items_to_publish) >= 15: break
+            for entry in feed.entries[:2]:
+                if len(items_to_publish) >= 12: break
                 if supabase.table('news').select("id").eq('source_url', entry.link).execute().data: continue
-
-                try:
-                    res_emb = client_ai.models.embed_content(model=EMBEDDING_MODEL, contents=entry.title)
-                    new_vec = res_emb.embeddings[0].values
-                    if any(cosine_similarity(new_vec, old) > 0.88 for old in existing_embs): continue
-                except: new_vec = None
 
                 ai_data = analyze_dynamic_with_protection(entry.title, live_models)
                 if ai_data:
                     items_to_publish.append({
                         "source_url": entry.link, "category": ai_data.get('category'),
                         "titles": ai_data.get('titles'), "summaries": ai_data.get('summaries'),
-                        "embedding": new_vec, "needs_full_translation": False, "is_public": True,
-                        "missing_reports": 0
+                        "needs_full_translation": False, "is_public": True, "missing_reports": 0
                     })
                 else:
                     items_to_publish.append({
                         "source_url": entry.link, "titles": {"en": entry.title},
-                        "embedding": new_vec, "needs_full_translation": True, "is_public": True,
-                        "missing_reports": 0
+                        "needs_full_translation": True, "is_public": True, "missing_reports": 0
                     })
         except: continue
 
