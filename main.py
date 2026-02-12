@@ -118,7 +118,7 @@ def run_bot():
     print(f"🚀 StyleMe Smart Engine. Budget: {budget}/1500")
 
     # --- שלב 1: השלמת פערים (Catch-up Mode) ---
-    pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(10).execute()
+    pending = supabase.table('news').select("*").eq('needs_full_translation', True).limit(3).execute()
     if pending.data:
         print(f"🔄 Processing {len(pending.data)} pending items...")
         for item in pending.data:
