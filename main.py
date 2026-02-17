@@ -28,230 +28,323 @@ except Exception as e:
     print(f"❌ Connection Error: {e}")
     sys.exit(1)
 
-# --- 2. רשימת 20 השפות הגלובליות ---
+# --- 2. שפות ונושאים ---
 LANG_CODES = [
-    "en", "he", "it", "fr", "es", "de",  # מערב אירופה וישראל
-    "zh", "jp", "ko", "ru",              # אסיה ומזרח אירופה
-    "ar", "pt", "tr", "hi", "vi",        # מזרח תיכון, ברזיל, הודו, וייטנאם
-    "id", "th", "nl", "pl", "sv"         # אינדונזיה, תאילנד, צפון ומזרח אירופה
+    "en", "he", "it", "fr", "es", "de", 
+    "zh", "jp", "ko", "ru", 
+    "ar", "pt", "tr", "hi", "vi", 
+    "id", "th", "nl", "pl", "sv"
 ]
 
-# --- 3. מקורות מידע ונושאים (הרשימה המלאה) ---
 DIRECT_FEEDS = [
     "https://www.businessoffashion.com/feeds/rss/",
     "https://www.voguebusiness.com/feed",
     "https://wwd.com/feed/",
     "https://www.fashionunited.com/rss-feed",
-    "https://www.fashionnetwork.com/rss/feed.xml"
+    "https://www.fashionnetwork.com/rss/feed.xml",
+    "https://sourcingjournal.com/feed/",
+    "https://www.textileworld.com/feed/"
 ]
 
+# הרשימה המורחבת והמלאה ביותר
 ALL_TOPICS = [
-    "Avant-Garde Fashion Design Trends", "Sustainable Couture Techniques", 
-    "Runway Color Forecast 2026", "Womenswear Silhouette Innovation",
-    "Footwear Sculpture & Design", "Luxury Bridal Market Trends",
-    "Experimental Accessories Design", "Streetwear Subculture Research",
-    "Textile Pattern Design Trends", "Gender-Neutral Fashion Design",
-    "Smart Fabrics & Electronic Textiles", "Biodegradable Synthetic Fibers",
-    "Recycled Ocean Plastic Textiles", "Mycelium & Mushroom Leather",
-    "Carbon Fiber Apparel Applications", "Waterless Dyeing Technology",
-    "Denim Indigo Weaving Innovations", "Digital Inkjet Textile Printing",
-    "Generative AI in Apparel Design", "3D Body Modeling & Fit Tech",
-    "Virtual Try-On UX Innovation", "Metaverse Luxury Collections",
-    "Blockchain for Luxury Authentication", "NFT Fashion Assets Regulation",
-    "Digital Product Passports Textiles", "Big Data in Fashion Retail",
-    "Artificial Intelligence Style Curators", "Fashion E-commerce Algorithm Trends",
-    "Predictive Analytics for Fashion Trends", "Global Fashion Retail Growth 2026",
-    "Luxury Sector Financial Outlook", "Apparel Supply Chain Resilience",
-    "Resale & Circular Economy Growth", "Clothing Rental Subscription Models",
-    "Direct-to-Consumer Strategy News", "Luxury Market in Southeast Asia",
-    "Post-Fast Fashion Business Models", "EU EPR Legislation for Textiles",
-    "Fashion Carbon Footprint Metrics", "Regenerative Cotton Farming News",
-    "Zero-Waste Pattern Making Tech", "Fashion Intellectual Property Law",
-    "Global Fashion Week Highlights", "Iconic Designer Retrospectives"
+    # --- MARKET, FINANCE & BUSINESS (עבור לחצן MARKET) ---
+    "Fashion Industry IPO News", "Luxury Brands Stock Performance",
+    "Global Fashion Retail Revenue 2026", "Mergers and Acquisitions Fashion",
+    "Apparel Consumer Spending Trends", "Emerging Markets Fashion Growth",
+    "Venture Capital in Fashion Tech", "Luxury Goods Market Analysis",
+    "Fashion E-commerce Quarterly Reports", "Retail Bankruptcy News Fashion",
+    "Fast Fashion Market Share Data", "Sportswear Market Growth Forecast",
+    
+    # --- LOGISTICS & SUPPLY CHAIN (עבור לחצן LOGISTICS) ---
+    "Textile Supply Chain Disruptions", "Fashion Last Mile Delivery",
+    "Warehouse Automation Apparel", "Sustainable Packaging Solutions",
+    "Cold Chain Logistics Luxury", "Freight Shipping Rates Textiles",
+    "Reshoring Textile Manufacturing", "Inventory Management AI",
+    "RFID Technology Fashion Retail", "Circular Supply Chain Models",
+    "Traceability in Cotton Supply", "Cross-border E-commerce Logistics",
+    
+    # --- TECH & INNOVATION (עבור לחצן TECH) ---
+    "Generative AI Fashion Design", "Virtual Try-On Technology",
+    "Digital Product Passports", "Smart Fabrics Wearable Tech",
+    "3D Knitting Technology", "Biomaterials Fashion Innovation",
+    "Mycelium Leather Developments", "Waterless Dyeing Technologies",
+    "Blockchain Luxury Authentication", "NFT Fashion Trends 2026",
+    "Hyper-Personalization AI", "Robotics in Garment Manufacturing",
+    
+    # --- TRENDS & DESIGN (עבור לחצן TRENDS) ---
+    "Runway Color Trends 2026", "Sustainable Couture Techniques",
+    "Avant-Garde Silhouette Trends", "Streetwear Culture Evolution",
+    "Gender-Neutral Fashion Design", "Vintage and Resale Market Trends",
+    "Denim Upcycling Trends", "Modest Fashion Market Growth",
+    "Footwear Design Innovation", "Accessories Trend Forecast",
+    "Textile Pattern Trends 2026", "Minimalist Fashion Aesthetics"
 ]
 
-# --- 4. ניהול מודלים דינמי ---
+# --- 3. ניהול מודלים ---
 def get_dynamic_models():
-    """מביא את רשימת המודלים מגוגל בזמן אמת ומסנן מודלים מהירים"""
+    """מביא מודלים ומתעדף FLASH"""
     try:
-        print("📡 Querying Google API for available models...", flush=True)
         all_models = list(client_ai.models.list())
-        
         valid_models = []
         for m in all_models:
             if "flash" in m.name.lower():
                 clean_name = m.name.replace("models/", "")
                 valid_models.append(clean_name)
-        
         valid_models.sort(reverse=True) 
-        
-        if not valid_models:
-            print("⚠️ Warning: No 'flash' models found. Using auto-select.", flush=True)
-            return []
-            
-        print(f"✅ Dynamic Model List: {valid_models}", flush=True)
-        return valid_models
-        
-    except Exception as e:
-        print(f"⚠️ API Discovery failed: {e}", flush=True)
-        return []
+        return valid_models if valid_models else []
+    except: return []
 
 ACTIVE_MODELS = get_dynamic_models()
 
-# --- 5. פונקציות עזר ---
+# --- 4. פונקציות ליבה ---
 
 def extract_json_smart(text):
-    try:
-        return json.loads(text)
+    try: return json.loads(text)
     except:
         try:
             start = text.find('{')
             end = text.rfind('}') + 1
-            if start != -1 and end != -1:
-                return json.loads(text[start:end])
+            if start != -1 and end != -1: return json.loads(text[start:end])
             return None
         except: return None
 
 def check_recent_duplicate(url):
-    """בודק כפילויות בטווח של 3 ימים"""
+    """בודק אם הלינק קיים ב-3 ימים האחרונים"""
     try:
         three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
         response = supabase.table("news").select("id").eq("source_url", url).gte("created_at", three_days_ago).execute()
-        if response.data and len(response.data) > 0:
-            return True 
-        return False 
-    except Exception as e:
-        print(f"⚠️ DB Check Error: {e}")
-        return False
+        return True if response.data else False
+    except: return False
 
 def analyze_content(item_title):
-    """שולח למודל ומבקש תרגום ל-20 שפות"""
+    """
+    מנתח את התוכן ומכריח את ה-AI לבחור קטגוריה חוקית בלבד.
+    """
     prompt = f"""
     You are a Global Fashion Intelligence Analyst.
     Analyze this news title: "{item_title}".
     
-    Task:
-    1. Categorize it into one technical category (e.g., Logistics, Tech, Trends).
-    2. Translate the title into ALL these languages: {LANG_CODES}.
-    3. Write a very short summary (1 sentence) in ALL these languages: {LANG_CODES}.
+    CRITICAL TASK 1: Categorize into EXACTLY ONE of these 4 categories:
+    - 'MARKET' (For finance, stocks, retail, business, mergers, sales).
+    - 'LOGISTICS' (For supply chain, shipping, manufacturing, sustainability, regulation).
+    - 'TECH' (For AI, digital, smart fabrics, innovation, materials).
+    - 'TRENDS' (For design, runway, style, colors, collections).
     
-    Return ONLY valid JSON.
+    CRITICAL TASK 2: Translate title to: {LANG_CODES}.
+    CRITICAL TASK 3: Summarize in 1 sentence in: {LANG_CODES}.
+    
+    Return ONLY valid JSON:
+    {{
+        "category": "CATEGORY_NAME",
+        "titles": {{...}},
+        "summaries": {{...}}
+    }}
     """
     
     models_to_try = ACTIVE_MODELS if ACTIVE_MODELS else [None]
 
     for model_name in models_to_try:
         try:
-            print(f"🧠 Analyzing with: {model_name if model_name else 'Default Auto'}...", flush=True)
+            # print(f"🧠 Analyzing with: {model_name}...", flush=True)
             if model_name:
                 response = client_ai.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
+                    model=model_name, contents=prompt,
                     config=types.GenerateContentConfig(response_mime_type="application/json")
                 )
-            else:
-                 return None
+            else: return None
 
             result = extract_json_smart(response.text)
-            if result: return result
             
-        except Exception as e:
-            err = str(e).lower()
-            if "429" in err or "quota" in err:
-                print(f"⚠️ Quota Exceeded for this model. Switching...", flush=True)
-                continue 
-            else:
-                print(f"❌ Error with model: {e}", flush=True)
-                continue
+            # וידוא ותיקון קטגוריה
+            if result:
+                cat = result.get('category', '').upper()
+                valid_cats = ['TRENDS', 'TECH', 'MARKET', 'LOGISTICS']
+                
+                # מנגנון תיקון אם ה-AI טועה
+                if cat not in valid_cats:
+                    title_lower = item_title.lower()
+                    if any(x in title_lower for x in ['stock', 'sale', 'revenue', 'ipo', 'business']):
+                        result['category'] = 'MARKET'
+                    elif any(x in title_lower for x in ['shipping', 'supply', 'chain', 'freight']):
+                        result['category'] = 'LOGISTICS'
+                    elif any(x in title_lower for x in ['ai', 'digital', 'tech', 'smart']):
+                        result['category'] = 'TECH'
+                    else:
+                        result['category'] = 'TRENDS'
+                else:
+                    result['category'] = cat # מוודאים שזה אותיות גדולות
+                
+                return result
+            
+        except Exception:
+            continue 
 
     return None
 
-def save_to_db(item):
+# --- 5. מנוע המחסנית והטיוטות (Queue & Drafts) ---
+
+def process_pending_drafts():
+    """פתרון 3: מנסה לתקן טיוטות שנכשלו בעבר"""
+    print("🛠️ Checking for drafts to repair...", flush=True)
     try:
-        supabase.table('news').insert(item).execute()
-        return True
+        # שולף 5 טיוטות
+        drafts = supabase.table('news').select("*").eq('needs_full_translation', True).limit(5).execute()
+        if not drafts.data: 
+            print("✨ No drafts found.", flush=True)
+            return
+
+        for item in drafts.data:
+            print(f"🔄 Retrying draft: {item['source_url'][:20]}...", flush=True)
+            original_title = item['titles'].get('en') if item['titles'] else "News"
+            
+            ai_data = analyze_content(original_title)
+            
+            if ai_data and isinstance(ai_data.get('titles'), dict) and 'en' in ai_data['titles']:
+                supabase.table('news').update({
+                    "category": ai_data.get('category', 'TRENDS'),
+                    "titles": ai_data.get('titles'),
+                    "summaries": ai_data.get('summaries'),
+                    "needs_full_translation": False,
+                    "is_public": False # מעביר למחסנית המתנה, לא מפרסם מיד!
+                }).eq('id', item['id']).execute()
+                print("✅ Draft repaired -> Moved to Queue.", flush=True)
+                time.sleep(2)
+            else:
+                print("⚠️ Retry failed.", flush=True)
+            
     except Exception as e:
-        if "42501" in str(e):
-            print(f"🚨 DB PERMISSION ERROR: Please Disable RLS in Supabase!", flush=True)
-        else:
-            print(f"❌ DB Error: {e}", flush=True)
-        return False
+        print(f"⚠️ Draft Error: {e}")
 
-# --- 6. הלוגיקה הראשית המעודכנת ---
-
-def run_bot():
-    print(f"🚀 StyleMe Pro Intelligence Engine Started", flush=True)
+def harvest_new_content():
+    """איסוף מסיבי למחסנית (Harvesting)"""
+    print("\n🚜 STARTING HARVEST...", flush=True)
     
     tasks = []
+    for f in DIRECT_FEEDS: tasks.append((f, "RSS"))
     
-    # איסוף משימות
-    rss_samples = random.sample(DIRECT_FEEDS, 2) 
-    for f in rss_samples: tasks.append((f, "RSS"))
-    
-    topic_samples = random.sample(ALL_TOPICS, 3)
+    # לוקחים 8 נושאים אקראיים בכל סבב איסוף כדי לגוון
+    topic_samples = random.sample(ALL_TOPICS, min(8, len(ALL_TOPICS)))
     for t in topic_samples: tasks.append((t, "TOPIC"))
         
     random.shuffle(tasks)
+    count = 0
     
-    MAX_ARTICLES_PER_RUN = 5 
-    
-    # חישוב זמן השהייה: 30 דקות (1800 שניות) לחלק לכמות הכתבות
-    # זה נותן כ-6 דקות המתנה בין כל פרסום
-    DELAY_BETWEEN_POSTS = 360 
-    
-    items_published = 0
-
     for source, s_type in tasks:
-        if items_published >= MAX_ARTICLES_PER_RUN: 
-            print("🏁 Batch limit reached. Stopping.", flush=True)
-            break
-        
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
         
         try:
-            print(f"📥 Fetching: {source[:40]}...", flush=True)
             resp = requests.get(url, timeout=10)
             feed = feedparser.parse(resp.content)
             
+            # לוקחים עד 3 מכל מקור
             for entry in feed.entries[:3]:
-                if items_published >= MAX_ARTICLES_PER_RUN: break
-                
-                if check_recent_duplicate(entry.link):
-                    print(f"🔹 Skipping recent duplicate: {entry.title[:20]}...", flush=True)
-                    continue
+                if check_recent_duplicate(entry.link): continue
 
-                # ניתוח AI
+                print(f"🤖 Analyzing: {entry.title[:30]}...", flush=True)
                 ai_data = analyze_content(entry.title)
                 
-                # תנאי סף: שומרים רק אם התקבל מידע מלא ומתורגם
+                item = {
+                    "source_url": entry.link,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "likes": 0,
+                    "is_public": False, # הכל נכנס למחסנית!
+                }
+
                 if ai_data and isinstance(ai_data.get('titles'), dict) and 'en' in ai_data['titles']:
-                    item = {
-                        "source_url": entry.link,
-                        "category": ai_data.get('category', 'General'),
-                        "titles": ai_data.get('titles', {}),
-                        "summaries": ai_data.get('summaries', {}),
-                        "needs_full_translation": False,
-                        "is_public": True,
-                        "likes": 0,
-                        "created_at": datetime.utcnow().isoformat()
-                    }
-                    
-                    if save_to_db(item):
-                        print(f"✅ PUBLISHED: {entry.title[:30]}...", flush=True)
-                        items_published += 1
-                        
-                        # --- השהייה חכמה (לפחות 6 דקות) ---
-                        if items_published < MAX_ARTICLES_PER_RUN:
-                            print(f"⏳ Waiting {DELAY_BETWEEN_POSTS} seconds before next article...", flush=True)
-                            time.sleep(DELAY_BETWEEN_POSTS)
-                            
+                    # הצלחה - מוכן לפרסום
+                    item["category"] = ai_data.get('category', 'TRENDS')
+                    item["titles"] = ai_data.get('titles')
+                    item["summaries"] = ai_data.get('summaries')
+                    item["needs_full_translation"] = False
+                    print("📥 Saved to READY QUEUE.")
                 else:
-                    # אם אין AI - מדלגים! לא שומרים טיוטה.
-                    print("⚠️ AI Analysis failed or incomplete. SKIPPING article (No Drafts).")
+                    # כישלון - נשמר כטיוטה לתיקון עתידי
+                    print("⚠️ AI Failed. Saving as DRAFT.")
+                    item["category"] = "Pending"
+                    item["titles"] = {"en": entry.title}
+                    item["summaries"] = {}
+                    item["needs_full_translation"] = True
                 
-        except Exception as e:
-            print(f"❌ Error fetching feed: {e}")
-            continue
+                try:
+                    supabase.table('news').insert(item).execute()
+                    count += 1
+                    time.sleep(1)
+                except: pass
+        except: continue
+    
+    print(f"🚜 Harvest Done. +{count} items.\n")
+
+def publish_next_in_queue():
+    """מנגנון הטיפטוף (24 שעות)"""
+    try:
+        # ספירת ממתינים
+        response = supabase.table('news').select("id", count='exact') \
+            .eq('is_public', False) \
+            .eq('needs_full_translation', False) \
+            .execute()
+        
+        pending_count = response.count
+        print(f"📊 Queue: {pending_count} ready.", flush=True)
+
+        if pending_count == 0:
+            print("😴 Empty queue.", flush=True)
+            return False
+
+        # חישוב זמן המתנה דינמי
+        # מחלקים את היממה (86400 שניות) במספר הכתבות שנשארו
+        sleep_time = int(86400 / max(pending_count, 1))
+        # מגבלה: לא פחות מ-5 דקות, לא יותר משעתיים
+        sleep_time = max(300, min(sleep_time, 7200))
+
+        # שליפת הכתבה הישנה ביותר
+        to_publish = supabase.table('news').select("id, titles") \
+            .eq('is_public', False) \
+            .eq('needs_full_translation', False) \
+            .order('created_at', desc=False) \
+            .limit(1) \
+            .execute()
+            
+        if to_publish.data:
+            article = to_publish.data[0]
+            title = article['titles'].get('en', 'News')
+            
+            # פרסום!
+            supabase.table('news').update({"is_public": True}).eq('id', article['id']).execute()
+            print(f"🚀 LIVE: {title[:30]}...", flush=True)
+            print(f"⏳ Next post in {sleep_time/60:.1f} mins.", flush=True)
+            
+            time.sleep(sleep_time)
+            return True
+            
+    except Exception as e:
+        print(f"❌ Publisher Error: {e}")
+        time.sleep(60)
+        return False
+
+# --- 6. הלוגיקה הרציפה (Infinite Loop) ---
+
+def run_continuous_bot():
+    print("♾️ Starting Continuous Bot Loop...", flush=True)
+    
+    last_harvest_time = 0
+    HARVEST_INTERVAL = 14400 # כל 4 שעות
+    
+    while True:
+        now = time.time()
+        
+        # 1. איסוף תוכן (פעם ב-4 שעות)
+        if now - last_harvest_time > HARVEST_INTERVAL:
+            harvest_new_content()
+            process_pending_drafts()
+            last_harvest_time = time.time()
+        
+        # 2. ניהול פרסום (רץ כל הזמן)
+        did_publish = publish_next_in_queue()
+        
+        if not did_publish:
+            # אם אין מה לפרסם, נחכה 5 דקות ונבדוק שוב
+            time.sleep(300)
 
 if __name__ == "__main__":
-    run_bot()
+    run_continuous_bot()
