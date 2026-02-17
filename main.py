@@ -16,6 +16,7 @@ try:
     SUPABASE_URL = os.environ["SUPABASE_URL"]
     SUPABASE_KEY = os.environ["SUPABASE_KEY"]
     
+    # טעינת רשימת מפתחות (Key Rotation)
     keys_env = os.environ.get("GEMINI_API_KEYS", os.environ.get("GEMINI_API_KEY"))
     API_KEYS_POOL = [k.strip() for k in keys_env.split(',') if k.strip()]
     if not API_KEYS_POOL: raise KeyError("No API Keys found!")
@@ -77,23 +78,39 @@ ALL_TOPICS = [
     "Gender-Neutral Fashion Design", "Vintage and Resale Market Trends"
 ]
 
-# --- 3. מודלים ---
+# --- 3. מודלים (דינמי לחלוטין - ללא שמות קשיחים) ---
 def get_dynamic_models():
+    """
+    שואב את רשימת המודלים מגוגל.
+    אם אין מודלים (או המפתח נכשל) - מנסה להחליף מפתח.
+    אם כל המפתחות נכשלו - מחזיר רשימה ריקה (והבוט יעצור).
+    """
     try:
         global client_ai
         all_models = list(client_ai.models.list())
         valid_models = []
         for m in all_models:
+            # סינון גנרי: כל מה שמכיל flash
             if "flash" in m.name.lower():
                 valid_models.append(m.name.replace("models/", ""))
+        
+        # מיון: החדשים ביותר למעלה
         valid_models.sort(reverse=True) 
-        return valid_models if valid_models else ["gemini-1.5-flash"]
-    except Exception:
+        
+        if not valid_models:
+            print("⚠️ API connected but no 'flash' models found.", flush=True)
+            return []
+            
+        return valid_models
+        
+    except Exception as e:
+        print(f"⚠️ Error fetching models: {e}", flush=True)
         if rotate_key():
             client_ai = get_ai_client()
-            return get_dynamic_models()
-        return ["gemini-1.5-flash"]
+            return get_dynamic_models() # נסיון חוזר עם מפתח חדש
+        return [] # כישלון טוטאלי
 
+# טעינה ראשונית
 ACTIVE_MODELS = get_dynamic_models()
 
 # --- 4. פונקציות ליבה ---
@@ -118,6 +135,11 @@ def check_recent_duplicate(url):
 def analyze_content(item_title):
     global client_ai
     
+    # בדיקת מגן: אם אין מודלים, לא מנסים אפילו
+    if not ACTIVE_MODELS:
+        print("🛑 No active models found via API. Skipping analysis.", flush=True)
+        return None
+    
     prompt = f"""
     You are a Global Fashion Intelligence Analyst.
     Analyze this news title: "{item_title}".
@@ -129,9 +151,7 @@ def analyze_content(item_title):
     Return ONLY valid JSON.
     """
     
-    models_to_try = ACTIVE_MODELS if ACTIVE_MODELS else [None]
-
-    for model_name in models_to_try:
+    for model_name in ACTIVE_MODELS:
         try:
             response = client_ai.models.generate_content(
                 model=model_name, contents=prompt,
@@ -151,49 +171,49 @@ def analyze_content(item_title):
                 print(f"⚠️ Quota hit. Rotating key...", flush=True)
                 if rotate_key():
                     client_ai = get_ai_client()
-                    continue
+                    continue # נסה שוב עם המפתח החדש
                 else: return None
             continue 
 
     return None
 
-# --- 5. ליבה: איסוף מהיר עם סטופר (Time Limited Harvest) ---
+# --- 5. מנגנון בטיחות ---
+
+def enforce_secrecy():
+    """מוודא ששום טיוטה או פנדינג לא חשופים לציבור"""
+    print("👮 Safety Check: Hiding leaks...", flush=True)
+    try:
+        supabase.table('news').update({"is_public": False}).eq('category', 'Pending').execute()
+        supabase.table('news').update({"is_public": False}).eq('needs_full_translation', True).execute()
+    except: pass
 
 def harvest_aggressive_time_limited():
-    print("🚜 STARTING TIME-BOXED HARVEST (Max 9 mins)...", flush=True)
+    print("🚜 STARTING HARVEST (Hidden Mode)...", flush=True)
     
     start_time = time.time()
-    TIME_LIMIT_SECONDS = 540 # 9 דקות בדיוק
+    TIME_LIMIT_SECONDS = 540 # 9 דקות
     
     tasks = []
     for f in DIRECT_FEEDS: tasks.append((f, "RSS"))
-    
-    # לוקחים הרבה נושאים
     topic_samples = random.sample(ALL_TOPICS, min(25, len(ALL_TOPICS)))
     for t in topic_samples: tasks.append((t, "TOPIC"))
-    
     random.shuffle(tasks)
     
     count = 0
     
     for source, s_type in tasks:
-        # 1. בדיקת הסטופר - הדבר הכי חשוב!
         if time.time() - start_time > TIME_LIMIT_SECONDS:
-            print("⏰ TIME LIMIT REACHED (9 mins). Stopping Harvest.", flush=True)
+            print("⏰ Time Limit. Stopping Harvest.", flush=True)
             break
             
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
         
         try:
-            resp = requests.get(url, timeout=5) # טיימאאוט קצר לרשת
+            resp = requests.get(url, timeout=5)
             feed = feedparser.parse(resp.content)
             
-            # לוקחים עד 3 כתבות מכל מקור
             for entry in feed.entries[:3]:
-                
-                # בדיקה חוזרת בתוך הלולאה הפנימית
                 if time.time() - start_time > TIME_LIMIT_SECONDS: break
-                
                 if check_recent_duplicate(entry.link): continue
 
                 print(f"🤖 Processing: {entry.title[:30]}...", flush=True)
@@ -203,7 +223,7 @@ def harvest_aggressive_time_limited():
                     "source_url": entry.link,
                     "created_at": datetime.utcnow().isoformat(),
                     "likes": 0,
-                    "is_public": False 
+                    "is_public": False # הכל מוסתר בהתחלה
                 }
 
                 if ai_data and 'en' in ai_data.get('titles', {}):
@@ -213,9 +233,9 @@ def harvest_aggressive_time_limited():
                         "summaries": ai_data.get('summaries'),
                         "needs_full_translation": False
                     })
-                    print("📥 Queue +1")
+                    print("📥 Queue +1 (Hidden)")
                 else:
-                    print("⚠️ Draft +1")
+                    print("⚠️ Draft +1 (Hidden)")
                     item.update({
                         "category": "Pending",
                         "titles": {"en": entry.title},
@@ -225,17 +245,55 @@ def harvest_aggressive_time_limited():
                 
                 supabase.table('news').insert(item).execute()
                 count += 1
-                # ביטלתי את ה-Sleep כאן כדי לטוס
                 
         except: continue
         
-    print(f"🚜 Harvest Finished. Total: +{count} items. Time: {int(time.time() - start_time)}s", flush=True)
+    print(f"🚜 Harvest Finished. +{count} hidden items.", flush=True)
+
+def publish_batch_from_queue():
+    """
+    מפרסם צרור (Batch) של כתבות.
+    לא אחת, אלא עד 5 כתבות בכל ריצה.
+    """
+    print("🚀 Starting Batch Publish...", flush=True)
+    
+    # כמה כתבות לפרסם במכה?
+    BATCH_SIZE = 5 
+    published_count = 0
+    
+    try:
+        # שולף את ה-5 הכי ישנות שמוכנות לפרסום
+        res = supabase.table('news').select("id, titles") \
+            .eq('is_public', False) \
+            .eq('needs_full_translation', False) \
+            .neq('category', 'Pending') \
+            .order('created_at', desc=False) \
+            .limit(BATCH_SIZE) \
+            .execute()
+            
+        if not res.data:
+            print("😴 Queue empty. Nothing to publish.", flush=True)
+            return
+
+        for item in res.data:
+            title = item['titles'].get('en', 'News')
+            
+            # הופך ל-PUBLIC
+            supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
+            print(f"✅ PUBLISHED: {title[:40]}...", flush=True)
+            published_count += 1
+            time.sleep(1) # השהייה קטנטנה בין עדכונים
+            
+        print(f"🏁 Batch Complete. Published {published_count} articles.", flush=True)
+            
+    except Exception as e:
+        print(f"❌ Publish Error: {e}")
 
 def process_pending_drafts():
     """תיקון טיוטות"""
     print("🛠️ Checking Drafts...", flush=True)
     try:
-        drafts = supabase.table('news').select("*").eq('needs_full_translation', True).limit(3).execute()
+        drafts = supabase.table('news').select("*").eq('needs_full_translation', True).limit(5).execute()
         if not drafts.data: return
 
         for item in drafts.data:
@@ -248,41 +306,27 @@ def process_pending_drafts():
                     "titles": ai_data.get('titles'),
                     "summaries": ai_data.get('summaries'),
                     "needs_full_translation": False,
-                    "is_public": False
+                    "is_public": False # הופך למוכן אך מוסתר (יפורסם ב-Batch הבא)
                 }).eq('id', item['id']).execute()
-                print("✅ Draft repaired.", flush=True)
-    except: pass
-
-def publish_one_from_queue():
-    """מפרסם כתבה אחת"""
-    try:
-        res = supabase.table('news').select("id, titles") \
-            .eq('is_public', False) \
-            .eq('needs_full_translation', False) \
-            .order('created_at', desc=False) \
-            .limit(1) \
-            .execute()
-            
-        if res.data:
-            item = res.data[0]
-            title = item['titles'].get('en', 'News')
-            supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
-            print(f"🚀 PUBLISHED: {title[:40]}...", flush=True)
+                print("✅ Draft Fixed -> Queue.", flush=True)
     except: pass
 
 # --- 6. הפונקציה הראשית ---
 
 def run_once():
-    print("⚡ StyleMe Bot: Safe Pulse", flush=True)
+    print("⚡ StyleMe Bot: Batch Pulse", flush=True)
     
-    # 1. איסוף עם הגבלת זמן קשיחה
+    # 1. בטיחות
+    enforce_secrecy()
+    
+    # 2. איסוף מסיבי
     harvest_aggressive_time_limited()
     
-    # 2. תיקון טיוטות (מהיר)
+    # 3. תיקון טיוטות
     process_pending_drafts()
     
-    # 3. פרסום כתבה אחת
-    publish_one_from_queue()
+    # 4. פרסום בצרורות (Batch)
+    publish_batch_from_queue()
     
     print("🏁 Done.", flush=True)
 
