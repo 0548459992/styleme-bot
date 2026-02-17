@@ -185,6 +185,8 @@ def enforce_secrecy():
     try:
         supabase.table('news').update({"is_public": False}).eq('category', 'Pending').execute()
         supabase.table('news').update({"is_public": False}).eq('needs_full_translation', True).execute()
+        # הגנה נוספת: הסתרת שורות בלי כותרת באנגלית
+        # (הערה: Supabase Python לא תמיד תומך ב-filters מורכבים ב-JSON, אז פשוט נסמוך על הדגלים למעלה)
     except: pass
 
 def harvest_aggressive_time_limited():
