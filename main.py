@@ -15,7 +15,7 @@ from google.genai import types
 try:
     SUPABASE_URL = os.environ["SUPABASE_URL"]
     
-    # שים לב: כאן מומלץ להשתמש ב-SERVICE_ROLE KEY כדי שהבוט יראה כתבות מוסתרות
+    # חשוב: מומלץ להשתמש ב-SERVICE_ROLE KEY כדי שהבוט יראה כתבות מוסתרות
     SUPABASE_KEY = os.environ["SUPABASE_KEY"]
     
     # טעינת רשימת מפתחות (Key Rotation)
@@ -90,7 +90,7 @@ def get_dynamic_models():
         all_models = list(client_ai.models.list())
         valid_models = []
         for m in all_models:
-            # סינון: רק מודלים מהירים (Flash)
+            # סינון גנרי: כל מה שמכיל flash
             if "flash" in m.name.lower():
                 valid_models.append(m.name.replace("models/", ""))
         
@@ -107,8 +107,8 @@ def get_dynamic_models():
         print(f"⚠️ Error fetching models: {e}", flush=True)
         if rotate_key():
             client_ai = get_ai_client()
-            return get_dynamic_models() 
-        return []
+            return get_dynamic_models() # נסיון חוזר עם מפתח חדש
+        return [] # כישלון טוטאלי
 
 # טעינה ראשונית
 ACTIVE_MODELS = get_dynamic_models()
@@ -135,9 +135,9 @@ def check_recent_duplicate(url):
 def analyze_content(item_title):
     global client_ai
     
-    # בדיקת מגן
+    # בדיקת מגן: אם אין מודלים, לא מנסים אפילו
     if not ACTIVE_MODELS:
-        print("🛑 No active models found. Skipping.", flush=True)
+        print("🛑 No active models found via API. Skipping analysis.", flush=True)
         return None
     
     prompt = f"""
@@ -171,13 +171,13 @@ def analyze_content(item_title):
                 print(f"⚠️ Quota hit. Rotating key...", flush=True)
                 if rotate_key():
                     client_ai = get_ai_client()
-                    continue 
+                    continue # נסה שוב עם המפתח החדש
                 else: return None
             continue 
 
     return None
 
-# --- 5. לוגיקה עסקית (Sanitize, Harvest, Fix, Publish) ---
+# --- 5. לוגיקה עסקית ---
 
 def enforce_secrecy():
     """מוודא ששום טיוטה או פנדינג לא חשופים לציבור"""
@@ -195,8 +195,6 @@ def harvest_aggressive_time_limited():
     
     tasks = []
     for f in DIRECT_FEEDS: tasks.append((f, "RSS"))
-    
-    # מדגם גדול של נושאים
     topic_samples = random.sample(ALL_TOPICS, min(25, len(ALL_TOPICS)))
     for t in topic_samples: tasks.append((t, "TOPIC"))
     random.shuffle(tasks)
@@ -204,9 +202,8 @@ def harvest_aggressive_time_limited():
     count = 0
     
     for source, s_type in tasks:
-        # בדיקת זמן
         if time.time() - start_time > TIME_LIMIT_SECONDS:
-            print("⏰ Time Limit reached. Stopping Harvest.", flush=True)
+            print("⏰ Time Limit. Stopping Harvest.", flush=True)
             break
             
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
@@ -222,7 +219,7 @@ def harvest_aggressive_time_limited():
                 print(f"🤖 Processing: {entry.title[:30]}...", flush=True)
                 ai_data = analyze_content(entry.title)
                 
-                # ברירת מחדל: מוסתר
+                # הכל מוסתר בהתחלה
                 item = {
                     "source_url": entry.link,
                     "created_at": datetime.utcnow().isoformat(),
@@ -271,46 +268,64 @@ def process_pending_drafts():
                     "titles": ai_data.get('titles'),
                     "summaries": ai_data.get('summaries'),
                     "needs_full_translation": False,
-                    "is_public": False 
+                    "is_public": False # הופך למוכן אך מוסתר
                 }).eq('id', item['id']).execute()
                 print("✅ Draft Fixed -> Queue.", flush=True)
     except: pass
 
-def publish_batch_from_queue():
+def publish_all_spread():
     """
-    מפרסם צרור (Batch) של כתבות.
-    הבוט מפרסם 5 כתבות בכל ריצה.
+    מפרסם את *כל* הכתבות המוכנות שיש במחסנית,
+    אבל בפריסה יחסית של זמן (Spaced out).
     """
-    print("🚀 Starting Batch Publish...", flush=True)
-    
-    BATCH_SIZE = 5 
-    published_count = 0
+    print("🚀 Starting Smart Spread Publish...", flush=True)
     
     try:
-        # שולף את ה-5 הכי ישנות שמוכנות לפרסום
-        # דורש הרשאה מתאימה (Service Role) כדי לראות is_public=False
+        # 1. שליפת כל הכתבות המוכנות (ללא הגבלת כמות!)
         res = supabase.table('news').select("id, titles") \
             .eq('is_public', False) \
             .eq('needs_full_translation', False) \
             .neq('category', 'Pending') \
             .order('created_at', desc=False) \
-            .limit(BATCH_SIZE) \
             .execute()
             
-        if not res.data:
-            print("😴 Queue empty (or Bot cannot see hidden items).", flush=True)
+        queue = res.data
+        total_items = len(queue)
+
+        if total_items == 0:
+            print("😴 Queue empty. Nothing to publish.", flush=True)
             return
 
-        for item in res.data:
+        print(f"📊 Found {total_items} items ready to go.", flush=True)
+
+        # 2. חישוב זמן ההשהייה
+        # אנחנו מקצים כ-12 דקות (720 שניות) לכל התהליך כדי לא לחרוג מזמן הריצה של השרת.
+        # מחלקים את הזמן הזה בכמות הכתבות.
+        MAX_DURATION_SECONDS = 720 
+        
+        delay = int(MAX_DURATION_SECONDS / max(total_items, 1))
+        
+        # מגבלות שפיות: לא פחות מ-2 שניות, לא יותר מ-3 דקות בין כתבה לכתבה
+        delay = max(2, min(delay, 180))
+
+        print(f"⏳ Spreading publication. Delay: {delay}s per article.", flush=True)
+        
+        published_count = 0
+
+        for item in queue:
             title = item['titles'].get('en', 'News')
             
-            # הופך ל-PUBLIC
+            # פרסום
             supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
-            print(f"✅ PUBLISHED: {title[:40]}...", flush=True)
-            published_count += 1
-            time.sleep(1) 
             
-        print(f"🏁 Batch Complete. Published {published_count} articles.", flush=True)
+            published_count += 1
+            print(f"✅ ({published_count}/{total_items}) LIVE: {title[:40]}...", flush=True)
+            
+            # מחכים רק אם זו לא הכתבה האחרונה
+            if published_count < total_items:
+                time.sleep(delay)
+            
+        print("🏁 Queue cleared completely.", flush=True)
             
     except Exception as e:
         print(f"❌ Publish Error: {e}")
@@ -318,19 +333,19 @@ def publish_batch_from_queue():
 # --- 6. הפונקציה הראשית ---
 
 def run_once():
-    print("⚡ StyleMe Bot: Batch Pulse", flush=True)
+    print("⚡ StyleMe Bot: Smart Pulse", flush=True)
     
-    # 1. בטיחות - הסתרת טיוטות שזלגו
+    # 1. בטיחות
     enforce_secrecy()
     
-    # 2. איסוף מסיבי (הכל נכנס כמוסתר)
+    # 2. איסוף מסיבי (הכל נכנס מוסתר)
     harvest_aggressive_time_limited()
     
-    # 3. תיקון טיוטות ישנות
+    # 3. תיקון טיוטות
     process_pending_drafts()
     
-    # 4. פרסום בצרורות (שחרור לאוויר)
-    publish_batch_from_queue()
+    # 4. פרסום חכם (הכל, בפריסה יחסית)
+    publish_all_spread()
     
     print("🏁 Done.", flush=True)
 
