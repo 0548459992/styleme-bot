@@ -80,65 +80,50 @@ ALL_TOPICS = [
     "Gender-Neutral Fashion Design", "Vintage and Resale Market Trends"
 ]
 
-# --- 3. מודלים (דינמי לחלוטין) ---
+# --- 3. מודלים חסינים (Resilient Models Logic) ---
 def get_dynamic_models():
     """
-    שואב את רשימת המודלים מגוגל.
+    מנגנון חכם שמושך את כל המודלים הזמינים וממיין אותם
+    כדי להבטיח שתמיד יהיה מודל עובד.
     """
     try:
         global client_ai
+        print("📡 Fetching available models from Google...", flush=True)
         all_models = list(client_ai.models.list())
+        
         valid_models = []
         for m in all_models:
-            # סינון גנרי: כל מה שמכיל flash
+            # מסנן רק מודלים מהירים (Flash) ועדכניים
             if "flash" in m.name.lower():
-                valid_models.append(m.name.replace("models/", ""))
+                clean_name = m.name.replace("models/", "")
+                valid_models.append(clean_name)
         
-        # מיון: החדשים ביותר למעלה
-        valid_models.sort(reverse=True) 
+        # מיון הפוך: גרסאות חדשות (2.0/2.5) יהיו ראשונות
+        valid_models.sort(reverse=True)
         
-        if not valid_models:
-            print("⚠️ API connected but no 'flash' models found.", flush=True)
-            return []
+        if valid_models:
+            print(f"✅ Active Models Found: {valid_models}", flush=True)
+            return valid_models
+        else:
+            print("⚠️ No models found automatically. Using fallback list.", flush=True)
+            return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
             
-        return valid_models
-        
     except Exception as e:
-        print(f"⚠️ Error fetching models: {e}", flush=True)
-        if rotate_key():
-            client_ai = get_ai_client()
-            return get_dynamic_models() # נסיון חוזר עם מפתח חדש
-        return [] # כישלון טוטאלי
+        print(f"⚠️ Model Discovery Failed: {e}", flush=True)
+        # אם נכשל, מחזיר רשימת חירום ידנית
+        return ["gemini-2.0-flash", "gemini-1.5-flash"]
 
-# טעינה ראשונית
+# טעינה ראשונית של המודלים
 ACTIVE_MODELS = get_dynamic_models()
 
-# --- 4. פונקציות ליבה ---
-
-def extract_json_smart(text):
-    try: return json.loads(text)
-    except:
-        try:
-            start = text.find('{')
-            end = text.rfind('}') + 1
-            if start != -1 and end != -1: return json.loads(text[start:end])
-            return None
-        except: return None
-
-def check_recent_duplicate(url):
-    try:
-        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
-        res = supabase.table("news").select("id").eq("source_url", url).gte("created_at", three_days_ago).execute()
-        return True if res.data else False
-    except: return False
+# --- 4. המוח: ניתוח תוכן עם התאוששות (Retry Engine) ---
 
 def analyze_content(item_title):
     global client_ai
     
-    # בדיקת מגן: אם אין מודלים, לא מנסים אפילו
+    # אם אין מודלים, מנסים לטעון מחדש
     if not ACTIVE_MODELS:
-        print("🛑 No active models found via API. Skipping analysis.", flush=True)
-        return None
+        get_dynamic_models()
     
     prompt = f"""
     You are a Global Fashion Intelligence Analyst.
@@ -151,30 +136,47 @@ def analyze_content(item_title):
     Return ONLY valid JSON.
     """
     
+    # הלוגיקה מהלוג שעבד: עוברים מודל-מודל עד להצלחה
     for model_name in ACTIVE_MODELS:
         try:
+            # print(f"🧠 Trying: {model_name}...", flush=True) # אופציונלי: להפעיל לדיבאג
+            
             response = client_ai.models.generate_content(
-                model=model_name, contents=prompt,
+                model=model_name,
+                contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
+            
             result = extract_json_smart(response.text)
             
             if result:
+                # בדיקת תקינות בסיסית
                 cat = result.get('category', '').upper()
                 valid_cats = ['TRENDS', 'TECH', 'MARKET', 'LOGISTICS']
-                if cat not in valid_cats: result['category'] = 'TRENDS'
-                else: result['category'] = cat
+                if cat not in valid_cats: 
+                    result['category'] = 'TRENDS'
+                else:
+                    result['category'] = cat
                 return result
-            
+                
         except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
-                print(f"⚠️ Quota hit. Rotating key...", flush=True)
+            err = str(e).lower()
+            # זיהוי ספציפי של בעיות מכסה (Quota)
+            if "429" in err or "quota" in err or "resource" in err:
+                print(f"⚠️ {model_name} Quota full. Switching to next model...", flush=True)
+                # לא עוצרים! ממשיכים למודל הבא בלולאה
+                continue
+            elif "not found" in err:
+                # מודל לא קיים, מדלגים
+                continue
+            else:
+                # שגיאה אחרת (כגון רשת), ננסה להחליף מפתח ולנסות שוב
                 if rotate_key():
                     client_ai = get_ai_client()
-                    continue # נסה שוב עם המפתח החדש
-                else: return None
+                    continue
             continue 
 
+    print("❌ All models failed for this item.", flush=True)
     return None
 
 # --- 5. לוגיקה עסקית ---
