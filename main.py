@@ -14,6 +14,8 @@ from google.genai import types
 # --- 1. הגדרות ומשתני סביבה ---
 try:
     SUPABASE_URL = os.environ["SUPABASE_URL"]
+    
+    # שים לב: כאן מומלץ להשתמש ב-SERVICE_ROLE KEY כדי שהבוט יראה כתבות מוסתרות
     SUPABASE_KEY = os.environ["SUPABASE_KEY"]
     
     # טעינת רשימת מפתחות (Key Rotation)
@@ -78,19 +80,17 @@ ALL_TOPICS = [
     "Gender-Neutral Fashion Design", "Vintage and Resale Market Trends"
 ]
 
-# --- 3. מודלים (דינמי לחלוטין - ללא שמות קשיחים) ---
+# --- 3. מודלים (דינמי לחלוטין) ---
 def get_dynamic_models():
     """
     שואב את רשימת המודלים מגוגל.
-    אם אין מודלים (או המפתח נכשל) - מנסה להחליף מפתח.
-    אם כל המפתחות נכשלו - מחזיר רשימה ריקה (והבוט יעצור).
     """
     try:
         global client_ai
         all_models = list(client_ai.models.list())
         valid_models = []
         for m in all_models:
-            # סינון גנרי: כל מה שמכיל flash
+            # סינון: רק מודלים מהירים (Flash)
             if "flash" in m.name.lower():
                 valid_models.append(m.name.replace("models/", ""))
         
@@ -107,8 +107,8 @@ def get_dynamic_models():
         print(f"⚠️ Error fetching models: {e}", flush=True)
         if rotate_key():
             client_ai = get_ai_client()
-            return get_dynamic_models() # נסיון חוזר עם מפתח חדש
-        return [] # כישלון טוטאלי
+            return get_dynamic_models() 
+        return []
 
 # טעינה ראשונית
 ACTIVE_MODELS = get_dynamic_models()
@@ -135,9 +135,9 @@ def check_recent_duplicate(url):
 def analyze_content(item_title):
     global client_ai
     
-    # בדיקת מגן: אם אין מודלים, לא מנסים אפילו
+    # בדיקת מגן
     if not ACTIVE_MODELS:
-        print("🛑 No active models found via API. Skipping analysis.", flush=True)
+        print("🛑 No active models found. Skipping.", flush=True)
         return None
     
     prompt = f"""
@@ -171,13 +171,13 @@ def analyze_content(item_title):
                 print(f"⚠️ Quota hit. Rotating key...", flush=True)
                 if rotate_key():
                     client_ai = get_ai_client()
-                    continue # נסה שוב עם המפתח החדש
+                    continue 
                 else: return None
             continue 
 
     return None
 
-# --- 5. מנגנון בטיחות ---
+# --- 5. לוגיקה עסקית (Sanitize, Harvest, Fix, Publish) ---
 
 def enforce_secrecy():
     """מוודא ששום טיוטה או פנדינג לא חשופים לציבור"""
@@ -185,8 +185,6 @@ def enforce_secrecy():
     try:
         supabase.table('news').update({"is_public": False}).eq('category', 'Pending').execute()
         supabase.table('news').update({"is_public": False}).eq('needs_full_translation', True).execute()
-        # הגנה נוספת: הסתרת שורות בלי כותרת באנגלית
-        # (הערה: Supabase Python לא תמיד תומך ב-filters מורכבים ב-JSON, אז פשוט נסמוך על הדגלים למעלה)
     except: pass
 
 def harvest_aggressive_time_limited():
@@ -197,6 +195,8 @@ def harvest_aggressive_time_limited():
     
     tasks = []
     for f in DIRECT_FEEDS: tasks.append((f, "RSS"))
+    
+    # מדגם גדול של נושאים
     topic_samples = random.sample(ALL_TOPICS, min(25, len(ALL_TOPICS)))
     for t in topic_samples: tasks.append((t, "TOPIC"))
     random.shuffle(tasks)
@@ -204,8 +204,9 @@ def harvest_aggressive_time_limited():
     count = 0
     
     for source, s_type in tasks:
+        # בדיקת זמן
         if time.time() - start_time > TIME_LIMIT_SECONDS:
-            print("⏰ Time Limit. Stopping Harvest.", flush=True)
+            print("⏰ Time Limit reached. Stopping Harvest.", flush=True)
             break
             
         url = source if s_type == "RSS" else f"https://news.google.com/rss/search?q={urllib.parse.quote(source)}&hl=en-US&gl=US&ceid=US:en"
@@ -221,11 +222,12 @@ def harvest_aggressive_time_limited():
                 print(f"🤖 Processing: {entry.title[:30]}...", flush=True)
                 ai_data = analyze_content(entry.title)
                 
+                # ברירת מחדל: מוסתר
                 item = {
                     "source_url": entry.link,
                     "created_at": datetime.utcnow().isoformat(),
                     "likes": 0,
-                    "is_public": False # הכל מוסתר בהתחלה
+                    "is_public": False 
                 }
 
                 if ai_data and 'en' in ai_data.get('titles', {}):
@@ -252,45 +254,6 @@ def harvest_aggressive_time_limited():
         
     print(f"🚜 Harvest Finished. +{count} hidden items.", flush=True)
 
-def publish_batch_from_queue():
-    """
-    מפרסם צרור (Batch) של כתבות.
-    לא אחת, אלא עד 5 כתבות בכל ריצה.
-    """
-    print("🚀 Starting Batch Publish...", flush=True)
-    
-    # כמה כתבות לפרסם במכה?
-    BATCH_SIZE = 5 
-    published_count = 0
-    
-    try:
-        # שולף את ה-5 הכי ישנות שמוכנות לפרסום
-        res = supabase.table('news').select("id, titles") \
-            .eq('is_public', False) \
-            .eq('needs_full_translation', False) \
-            .neq('category', 'Pending') \
-            .order('created_at', desc=False) \
-            .limit(BATCH_SIZE) \
-            .execute()
-            
-        if not res.data:
-            print("😴 Queue empty. Nothing to publish.", flush=True)
-            return
-
-        for item in res.data:
-            title = item['titles'].get('en', 'News')
-            
-            # הופך ל-PUBLIC
-            supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
-            print(f"✅ PUBLISHED: {title[:40]}...", flush=True)
-            published_count += 1
-            time.sleep(1) # השהייה קטנטנה בין עדכונים
-            
-        print(f"🏁 Batch Complete. Published {published_count} articles.", flush=True)
-            
-    except Exception as e:
-        print(f"❌ Publish Error: {e}")
-
 def process_pending_drafts():
     """תיקון טיוטות"""
     print("🛠️ Checking Drafts...", flush=True)
@@ -308,26 +271,65 @@ def process_pending_drafts():
                     "titles": ai_data.get('titles'),
                     "summaries": ai_data.get('summaries'),
                     "needs_full_translation": False,
-                    "is_public": False # הופך למוכן אך מוסתר (יפורסם ב-Batch הבא)
+                    "is_public": False 
                 }).eq('id', item['id']).execute()
                 print("✅ Draft Fixed -> Queue.", flush=True)
     except: pass
+
+def publish_batch_from_queue():
+    """
+    מפרסם צרור (Batch) של כתבות.
+    הבוט מפרסם 5 כתבות בכל ריצה.
+    """
+    print("🚀 Starting Batch Publish...", flush=True)
+    
+    BATCH_SIZE = 5 
+    published_count = 0
+    
+    try:
+        # שולף את ה-5 הכי ישנות שמוכנות לפרסום
+        # דורש הרשאה מתאימה (Service Role) כדי לראות is_public=False
+        res = supabase.table('news').select("id, titles") \
+            .eq('is_public', False) \
+            .eq('needs_full_translation', False) \
+            .neq('category', 'Pending') \
+            .order('created_at', desc=False) \
+            .limit(BATCH_SIZE) \
+            .execute()
+            
+        if not res.data:
+            print("😴 Queue empty (or Bot cannot see hidden items).", flush=True)
+            return
+
+        for item in res.data:
+            title = item['titles'].get('en', 'News')
+            
+            # הופך ל-PUBLIC
+            supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
+            print(f"✅ PUBLISHED: {title[:40]}...", flush=True)
+            published_count += 1
+            time.sleep(1) 
+            
+        print(f"🏁 Batch Complete. Published {published_count} articles.", flush=True)
+            
+    except Exception as e:
+        print(f"❌ Publish Error: {e}")
 
 # --- 6. הפונקציה הראשית ---
 
 def run_once():
     print("⚡ StyleMe Bot: Batch Pulse", flush=True)
     
-    # 1. בטיחות
+    # 1. בטיחות - הסתרת טיוטות שזלגו
     enforce_secrecy()
     
-    # 2. איסוף מסיבי
+    # 2. איסוף מסיבי (הכל נכנס כמוסתר)
     harvest_aggressive_time_limited()
     
-    # 3. תיקון טיוטות
+    # 3. תיקון טיוטות ישנות
     process_pending_drafts()
     
-    # 4. פרסום בצרורות (Batch)
+    # 4. פרסום בצרורות (שחרור לאוויר)
     publish_batch_from_queue()
     
     print("🏁 Done.", flush=True)
