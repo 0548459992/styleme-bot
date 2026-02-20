@@ -117,6 +117,24 @@ def get_dynamic_models():
 ACTIVE_MODELS = get_dynamic_models()
 
 # --- 4. המוח: ניתוח תוכן עם התאוששות (Retry Engine) ---
+# --- 4. פונקציות ליבה ---
+
+def extract_json_smart(text):
+    try: return json.loads(text)
+    except:
+        try:
+            start = text.find('{')
+            end = text.rfind('}') + 1
+            if start != -1 and end != -1: return json.loads(text[start:end])
+            return None
+        except: return None
+
+def check_recent_duplicate(url):
+    try:
+        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        res = supabase.table("news").select("id").eq("source_url", url).gte("created_at", three_days_ago).execute()
+        return True if res.data else False
+    except: return False
 
 def analyze_content(item_title):
     global client_ai
@@ -138,7 +156,7 @@ def analyze_content(item_title):
     
     for model_name in ACTIVE_MODELS:
         try:
-            # 🛑 חובה: השהייה קטנה כדי שגוגל לא יחסום אותנו על ספאם/מהירות 
+            # 🛑 השהייה קטנה של 2 שניות כדי שגוגל לא יחסום אותנו על הצפת בקשות
             time.sleep(2) 
             
             response = client_ai.models.generate_content(
@@ -160,27 +178,29 @@ def analyze_content(item_title):
                 return result
                 
         except Exception as e:
-            # 🚨 חשיפת האמת: מדפיס את השגיאה המדויקת והגולמית של גוגל
-            print(f"🚨 DEBUG ERROR on {model_name}: {repr(e)}", flush=True)
-            
             err = str(e).lower()
+            
+            # 🚨 זיהוי חסימת המכסה החינמית (429 RESOURCE_EXHAUSTED) מהלוג שלך
             if "429" in err or "quota" in err or "resourceexhausted" in err:
-                # הוספתי עוד השהייה במקרה של 429 לפני שמחליפים מפתח
-                time.sleep(3) 
+                print(f"⚠️ Limit hit on {model_name}. Sleeping for 30s to cool down...", flush=True)
+                
+                # הבוט עושה הפסקה של 30 שניות כדי לתת למכסה של גוגל להתאפס
+                time.sleep(30) 
+                
+                # מנסה להחליף מפתח אם יש, ואז ממשיך
                 if rotate_key():
                     client_ai = get_ai_client()
-                    continue 
-                else:
-                    print("❌ API Key exhausted and no backup keys. Halting.", flush=True)
-                    return None 
+                continue 
+                
             elif "not found" in err:
-                continue
+                continue # מודל לא קיים, מדלגים
             else:
+                # מדפיס שגיאות אחרות כדי שנדע עליהן
+                print(f"🚨 DEBUG ERROR on {model_name}: {repr(e)}", flush=True)
                 continue 
 
     print("❌ All models failed for this item.", flush=True)
     return None
-    
 # --- 5. לוגיקה עסקית ---
 
 def enforce_secrecy():
