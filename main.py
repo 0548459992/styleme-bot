@@ -136,10 +136,10 @@ def analyze_content(item_title):
     Return ONLY valid JSON.
     """
     
-    # הלוגיקה מהלוג שעבד: עוברים מודל-מודל עד להצלחה
     for model_name in ACTIVE_MODELS:
         try:
-            # print(f"🧠 Trying: {model_name}...", flush=True) # אופציונלי: להפעיל לדיבאג
+            # 🛑 חובה: השהייה קטנה כדי שגוגל לא יחסום אותנו על ספאם/מהירות 
+            time.sleep(2) 
             
             response = client_ai.models.generate_content(
                 model=model_name,
@@ -160,25 +160,27 @@ def analyze_content(item_title):
                 return result
                 
         except Exception as e:
+            # 🚨 חשיפת האמת: מדפיס את השגיאה המדויקת והגולמית של גוגל
+            print(f"🚨 DEBUG ERROR on {model_name}: {repr(e)}", flush=True)
+            
             err = str(e).lower()
-            # זיהוי ספציפי של בעיות מכסה (Quota)
-            if "429" in err or "quota" in err or "resource" in err:
-                print(f"⚠️ {model_name} Quota full. Switching to next model...", flush=True)
-                # לא עוצרים! ממשיכים למודל הבא בלולאה
-                continue
-            elif "not found" in err:
-                # מודל לא קיים, מדלגים
-                continue
-            else:
-                # שגיאה אחרת (כגון רשת), ננסה להחליף מפתח ולנסות שוב
+            if "429" in err or "quota" in err or "resourceexhausted" in err:
+                # הוספתי עוד השהייה במקרה של 429 לפני שמחליפים מפתח
+                time.sleep(3) 
                 if rotate_key():
                     client_ai = get_ai_client()
-                    continue
-            continue 
+                    continue 
+                else:
+                    print("❌ API Key exhausted and no backup keys. Halting.", flush=True)
+                    return None 
+            elif "not found" in err:
+                continue
+            else:
+                continue 
 
     print("❌ All models failed for this item.", flush=True)
     return None
-
+    
 # --- 5. לוגיקה עסקית ---
 
 def enforce_secrecy():
