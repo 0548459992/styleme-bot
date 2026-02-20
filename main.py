@@ -139,7 +139,6 @@ def check_recent_duplicate(url):
 def analyze_content(item_title):
     global client_ai
     
-    # אם אין מודלים, מנסים לטעון מחדש
     if not ACTIVE_MODELS:
         get_dynamic_models()
     
@@ -156,8 +155,8 @@ def analyze_content(item_title):
     
     for model_name in ACTIVE_MODELS:
         try:
-            # 🛑 השהייה קטנה של 2 שניות כדי שגוגל לא יחסום אותנו על הצפת בקשות
-            time.sleep(2) 
+            # השהייה קטנטנה של שניה למנוע הצפה של הבקשות
+            time.sleep(1) 
             
             response = client_ai.models.generate_content(
                 model=model_name,
@@ -168,39 +167,38 @@ def analyze_content(item_title):
             result = extract_json_smart(response.text)
             
             if result:
-                # בדיקת תקינות בסיסית
                 cat = result.get('category', '').upper()
                 valid_cats = ['TRENDS', 'TECH', 'MARKET', 'LOGISTICS']
-                if cat not in valid_cats: 
-                    result['category'] = 'TRENDS'
-                else:
-                    result['category'] = cat
+                result['category'] = cat if cat in valid_cats else 'TRENDS'
                 return result
                 
         except Exception as e:
             err = str(e).lower()
             
-            # 🚨 זיהוי חסימת המכסה החינמית (429 RESOURCE_EXHAUSTED) מהלוג שלך
+            # זיהוי חסימת מכסה (Quota)
             if "429" in err or "quota" in err or "resourceexhausted" in err:
-                print(f"⚠️ Limit hit on {model_name}. Sleeping for 30s to cool down...", flush=True)
                 
-                # הבוט עושה הפסקה של 30 שניות כדי לתת למכסה של גוגל להתאפס
-                time.sleep(30) 
-                
-                # מנסה להחליף מפתח אם יש, ואז ממשיך
+                # אם יש עוד מפתחות - מחליפים וממשיכים מיד
                 if rotate_key():
+                    print(f"🔄 Switched Key on {model_name}. Retrying...", flush=True)
                     client_ai = get_ai_client()
-                continue 
-                
+                    continue 
+                else:
+                    # אם הגענו לכאן - אין מפתחות אחרים! הכל שרוף.
+                    print(f"⚠️ Key exhausted on {model_name}. No backup keys! Stopping models loop.", flush=True)
+                    print("⏳ Sleeping 60s to let Google reset the quota...", flush=True)
+                    time.sleep(60) # נחים דקה שלמה כדי לשחרר את החסימה להמשך התהליך
+                    return None # יוצאים לגמרי מהלולאה! לא מנסים את שאר המודלים סתם
+                    
             elif "not found" in err:
-                continue # מודל לא קיים, מדלגים
+                continue
             else:
-                # מדפיס שגיאות אחרות כדי שנדע עליהן
                 print(f"🚨 DEBUG ERROR on {model_name}: {repr(e)}", flush=True)
                 continue 
 
     print("❌ All models failed for this item.", flush=True)
     return None
+    
 # --- 5. לוגיקה עסקית ---
 
 def enforce_secrecy():
