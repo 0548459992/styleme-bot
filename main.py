@@ -142,21 +142,33 @@ def analyze_content(item_title):
     if not ACTIVE_MODELS:
         get_dynamic_models()
     
+    # הפרומפט החדש: כופה על גוגל מבנה קשיח בלי מקום לאלתורים!
     prompt = f"""
     You are a Global Fashion Intelligence Analyst.
     Analyze this news title: "{item_title}".
     
-    TASK 1: Categorize into EXACTLY ONE: 'MARKET', 'LOGISTICS', 'TECH', 'TRENDS'.
-    TASK 2: Translate title to: {LANG_CODES}.
-    TASK 3: Summarize in 1 sentence in: {LANG_CODES}.
+    CRITICAL: You MUST return ONLY a valid JSON object matching this EXACT structure:
+    {{
+        "category": "TRENDS", // Choose exactly ONE: MARKET, LOGISTICS, TECH, TRENDS
+        "titles": {{
+            "en": "English translated title",
+            "he": "Hebrew translated title"
+            // Continue for all requested languages
+        }},
+        "summaries": {{
+            "en": "English 1-sentence summary",
+            "he": "Hebrew 1-sentence summary"
+            // Continue for all requested languages
+        }}
+    }}
     
-    Return ONLY valid JSON.
+    Target languages: {LANG_CODES}
     """
     
     for model_name in ACTIVE_MODELS:
         try:
-            # השהייה קטנטנה של שניה למנוע הצפה של הבקשות
-            time.sleep(1) 
+            # מנוחה קטנה כדי לא לעצבן את שרתי גוגל
+            time.sleep(1.5) 
             
             response = client_ai.models.generate_content(
                 model=model_name,
@@ -167,28 +179,39 @@ def analyze_content(item_title):
             result = extract_json_smart(response.text)
             
             if result:
+                # מנגנון תיקון אוטומטי במקרה שה-AI טעה באיות של המפתחות
+                if 'title' in result and 'titles' not in result:
+                    result['titles'] = result.pop('title')
+                if 'summary' in result and 'summaries' not in result:
+                    result['summaries'] = result.pop('summary')
+                if 'translations' in result and 'titles' not in result:
+                    result['titles'] = result.pop('translations')
+                
+                # בדיקת תקינות הקטגוריה
                 cat = result.get('category', '').upper()
                 valid_cats = ['TRENDS', 'TECH', 'MARKET', 'LOGISTICS']
                 result['category'] = cat if cat in valid_cats else 'TRENDS'
+                
                 return result
                 
         except Exception as e:
             err = str(e).lower()
             
-            # זיהוי חסימת מכסה (Quota)
-            if "429" in err or "quota" in err or "resourceexhausted" in err:
+            # עומס זמני על המודל הספציפי אצל גוגל
+            if "503" in err or "unavailable" in err:
+                print(f"⚠️ Model {model_name} is overloaded (503). Trying next model...", flush=True)
+                continue
                 
-                # אם יש עוד מפתחות - מחליפים וממשיכים מיד
+            # חסימת מהירות/מכסה (Quota)
+            elif "429" in err or "quota" in err or "resourceexhausted" in err:
                 if rotate_key():
                     print(f"🔄 Switched Key on {model_name}. Retrying...", flush=True)
                     client_ai = get_ai_client()
                     continue 
                 else:
-                    # אם הגענו לכאן - אין מפתחות אחרים! הכל שרוף.
-                    print(f"⚠️ Key exhausted on {model_name}. No backup keys! Stopping models loop.", flush=True)
-                    print("⏳ Sleeping 60s to let Google reset the quota...", flush=True)
-                    time.sleep(60) # נחים דקה שלמה כדי לשחרר את החסימה להמשך התהליך
-                    return None # יוצאים לגמרי מהלולאה! לא מנסים את שאר המודלים סתם
+                    print(f"⚠️ Key exhausted. Sleeping 60s to cool down...", flush=True)
+                    time.sleep(60) 
+                    return None 
                     
             elif "not found" in err:
                 continue
