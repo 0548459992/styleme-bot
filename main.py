@@ -81,38 +81,38 @@ ALL_TOPICS = [
 ]
 
 # --- 3. מודלים חסינים (Resilient Models Logic) ---
+# --- 3. מודלים (דינמי ומוגן משגיאות) ---
 def get_dynamic_models():
-    """
-    מנגנון חכם שמושך את כל המודלים הזמינים וממיין אותם
-    כדי להבטיח שתמיד יהיה מודל עובד.
-    """
     try:
         global client_ai
-        print("📡 Fetching available models from Google...", flush=True)
         all_models = list(client_ai.models.list())
-        
         valid_models = []
+        
+        # רשימה שחורה: מילים שאנחנו לא רוצים בשם של המודל
+        bad_words = ['audio', 'tts', 'image', 'vision', 'preview-09', 'preview-12']
+        
         for m in all_models:
-            # מסנן רק מודלים מהירים (Flash) ועדכניים
-            if "flash" in m.name.lower():
-                clean_name = m.name.replace("models/", "")
-                valid_models.append(clean_name)
-        
-        # מיון הפוך: גרסאות חדשות (2.0/2.5) יהיו ראשונות
-        valid_models.sort(reverse=True)
-        
-        if valid_models:
-            print(f"✅ Active Models Found: {valid_models}", flush=True)
-            return valid_models
-        else:
-            print("⚠️ No models found automatically. Using fallback list.", flush=True)
-            return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+            name = m.name.lower()
             
+            # מוודא שיש "flash" אבל שאין אף מילה מהרשימה השחורה
+            if "flash" in name and not any(bad in name for bad in bad_words):
+                valid_models.append(m.name.replace("models/", ""))
+        
+        valid_models.sort(reverse=True) 
+        if not valid_models: 
+            return []
+        
+        print(f"✅ Clean Models Found: {valid_models}", flush=True)
+        return valid_models
+        
     except Exception as e:
-        print(f"⚠️ Model Discovery Failed: {e}", flush=True)
-        # אם נכשל, מחזיר רשימת חירום ידנית
-        return ["gemini-2.0-flash", "gemini-1.5-flash"]
+        print(f"⚠️ Error fetching models: {e}", flush=True)
+        if rotate_key():
+            client_ai = get_ai_client()
+            return get_dynamic_models()
+        return ["gemini-2.0-flash"] # Fallback בטוח
 
+ACTIVE_MODELS = get_dynamic_models()
 # טעינה ראשונית של המודלים
 ACTIVE_MODELS = get_dynamic_models()
 
