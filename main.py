@@ -20,6 +20,8 @@ try:
     
     # טעינת רשימת מפתחות (Key Rotation)
     keys_env = os.environ.get("GEMINI_API_KEYS", os.environ.get("GEMINI_API_KEY"))
+    if not keys_env: raise KeyError("API Keys variable is empty!")
+    
     API_KEYS_POOL = [k.strip() for k in keys_env.split(',') if k.strip()]
     if not API_KEYS_POOL: raise KeyError("No API Keys found!")
 
@@ -81,19 +83,17 @@ ALL_TOPICS = [
 ]
 
 # --- 3. מודלים חסינים (Resilient Models Logic) ---
-# --- 3. מודלים (דינמי ומוגן משגיאות) ---
 def get_dynamic_models():
     try:
         global client_ai
         all_models = list(client_ai.models.list())
         valid_models = []
         
-        # רשימה שחורה: מילים שאנחנו לא רוצים בשם של המודל
+        # רשימה שחורה: מילים שאנחנו לא רוצים בשם של המודל (קול, תמונות, גרסאות ישנות)
         bad_words = ['audio', 'tts', 'image', 'vision', 'preview-09', 'preview-12']
         
         for m in all_models:
             name = m.name.lower()
-            
             # מוודא שיש "flash" אבל שאין אף מילה מהרשימה השחורה
             if "flash" in name and not any(bad in name for bad in bad_words):
                 valid_models.append(m.name.replace("models/", ""))
@@ -110,14 +110,12 @@ def get_dynamic_models():
         if rotate_key():
             client_ai = get_ai_client()
             return get_dynamic_models()
-        return ["gemini-2.0-flash"] # Fallback בטוח
+        return ["gemini-2.0-flash", "gemini-1.5-flash"] # Fallback בטוח
 
-ACTIVE_MODELS = get_dynamic_models()
 # טעינה ראשונית של המודלים
 ACTIVE_MODELS = get_dynamic_models()
 
 # --- 4. המוח: ניתוח תוכן עם התאוששות (Retry Engine) ---
-# --- 4. פונקציות ליבה ---
 
 def extract_json_smart(text):
     try: return json.loads(text)
@@ -197,19 +195,19 @@ def analyze_content(item_title):
         except Exception as e:
             err = str(e).lower()
             
-            # עומס זמני על המודל הספציפי אצל גוגל
+            # עומס זמני על המודל הספציפי אצל גוגל (503)
             if "503" in err or "unavailable" in err:
                 print(f"⚠️ Model {model_name} is overloaded (503). Trying next model...", flush=True)
                 continue
                 
-            # חסימת מהירות/מכסה (Quota)
+            # חסימת מהירות/מכסה (Quota - 429)
             elif "429" in err or "quota" in err or "resourceexhausted" in err:
                 if rotate_key():
                     print(f"🔄 Switched Key on {model_name}. Retrying...", flush=True)
                     client_ai = get_ai_client()
                     continue 
                 else:
-                    print(f"⚠️ Key exhausted. Sleeping 60s to cool down...", flush=True)
+                    print(f"⚠️ Key exhausted. Sleeping 60s to let Google reset quota...", flush=True)
                     time.sleep(60) 
                     return None 
                     
@@ -289,10 +287,15 @@ def harvest_aggressive_time_limited():
                         "needs_full_translation": True
                     })
                 
-                supabase.table('news').insert(item).execute()
-                count += 1
+                # תפיסת שגיאות במסד הנתונים כדי שלא ישתקו אותנו
+                try:
+                    supabase.table('news').insert(item).execute()
+                    count += 1
+                except Exception as db_err:
+                    print(f"🚨 DATABASE INSERT ERROR: {db_err}", flush=True)
                 
-        except: continue
+        except Exception as e:
+            continue
         
     print(f"🚜 Harvest Finished. +{count} hidden items.", flush=True)
 
@@ -308,15 +311,18 @@ def process_pending_drafts():
             ai_data = analyze_content(original_title)
             
             if ai_data and 'en' in ai_data.get('titles', {}):
-                supabase.table('news').update({
-                    "category": ai_data.get('category', 'TRENDS'),
-                    "titles": ai_data.get('titles'),
-                    "summaries": ai_data.get('summaries'),
-                    "needs_full_translation": False,
-                    "is_public": False # הופך למוכן אך מוסתר
-                }).eq('id', item['id']).execute()
-                print("✅ Draft Fixed -> Queue.", flush=True)
-    except: pass
+                try:
+                    supabase.table('news').update({
+                        "category": ai_data.get('category', 'TRENDS'),
+                        "titles": ai_data.get('titles'),
+                        "summaries": ai_data.get('summaries'),
+                        "needs_full_translation": False,
+                        "is_public": False # הופך למוכן אך מוסתר
+                    }).eq('id', item['id']).execute()
+                    print("✅ Draft Fixed -> Queue.", flush=True)
+                except Exception as db_err:
+                    print(f"🚨 DATABASE UPDATE ERROR: {db_err}", flush=True)
+    except pass
 
 def publish_all_spread():
     """
@@ -344,10 +350,7 @@ def publish_all_spread():
         print(f"📊 Found {total_items} items ready to go.", flush=True)
 
         # 2. חישוב זמן ההשהייה
-        # אנחנו מקצים כ-12 דקות (720 שניות) לכל התהליך כדי לא לחרוג מזמן הריצה של השרת.
-        # מחלקים את הזמן הזה בכמות הכתבות.
         MAX_DURATION_SECONDS = 720 
-        
         delay = int(MAX_DURATION_SECONDS / max(total_items, 1))
         
         # מגבלות שפיות: לא פחות מ-2 שניות, לא יותר מ-3 דקות בין כתבה לכתבה
@@ -361,14 +364,17 @@ def publish_all_spread():
             title = item['titles'].get('en', 'News')
             
             # פרסום
-            supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
-            
-            published_count += 1
-            print(f"✅ ({published_count}/{total_items}) LIVE: {title[:40]}...", flush=True)
-            
-            # מחכים רק אם זו לא הכתבה האחרונה
-            if published_count < total_items:
-                time.sleep(delay)
+            try:
+                supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
+                
+                published_count += 1
+                print(f"✅ ({published_count}/{total_items}) LIVE: {title[:40]}...", flush=True)
+                
+                # מחכים רק אם זו לא הכתבה האחרונה
+                if published_count < total_items:
+                    time.sleep(delay)
+            except Exception as db_err:
+                print(f"🚨 DATABASE PUBLISH ERROR: {db_err}", flush=True)
             
         print("🏁 Queue cleared completely.", flush=True)
             
