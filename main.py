@@ -94,6 +94,7 @@ def get_dynamic_models():
         
         for m in all_models:
             name = m.name.lower()
+            
             # מוודא שיש "flash" אבל שאין אף מילה מהרשימה השחורה
             if "flash" in name and not any(bad in name for bad in bad_words):
                 valid_models.append(m.name.replace("models/", ""))
@@ -207,8 +208,9 @@ def analyze_content(item_title):
                     client_ai = get_ai_client()
                     continue 
                 else:
-                    print(f"⚠️ Key exhausted. Sleeping 60s to let Google reset quota...", flush=True)
-                    time.sleep(60) 
+                    # הורדנו את ההמתנה ל-30 שניות כדי לחסוך זמן שרת
+                    print(f"⚠️ Key exhausted. Sleeping 30s to let Google reset quota...", flush=True)
+                    time.sleep(30) 
                     return None 
                     
             elif "not found" in err:
@@ -234,7 +236,8 @@ def harvest_aggressive_time_limited():
     print("🚜 STARTING HARVEST (Hidden Mode)...", flush=True)
     
     start_time = time.time()
-    TIME_LIMIT_SECONDS = 540 # 9 דקות
+    # הוגדל ל-6 דקות עבודה מקסימליות (360 שניות) לבקשתך
+    TIME_LIMIT_SECONDS = 360 
     
     tasks = []
     for f in DIRECT_FEEDS: tasks.append((f, "RSS"))
@@ -322,17 +325,17 @@ def process_pending_drafts():
                     print("✅ Draft Fixed -> Queue.", flush=True)
                 except Exception as db_err:
                     print(f"🚨 DATABASE UPDATE ERROR: {db_err}", flush=True)
-    except pass
+    except Exception as e: 
+        pass
 
-def publish_all_spread():
+def schedule_publications():
     """
-    מפרסם את *כל* הכתבות המוכנות שיש במחסנית,
-    אבל בפריסה יחסית של זמן (Spaced out).
+    מערכת התזמון החדשה: מחלקת את הכתבות על פני שעתיים קדימה
+    ללא שימוש ב-Sleep כדי לחסוך זמן שרת!
     """
-    print("🚀 Starting Smart Spread Publish...", flush=True)
-    
+    print("📅 Scheduling items for the next 2 hours...", flush=True)
     try:
-        # 1. שליפת כל הכתבות המוכנות (ללא הגבלת כמות!)
+        # שולף את כל הכתבות המוכנות
         res = supabase.table('news').select("id, titles") \
             .eq('is_public', False) \
             .eq('needs_full_translation', False) \
@@ -344,59 +347,55 @@ def publish_all_spread():
         total_items = len(queue)
 
         if total_items == 0:
-            print("😴 Queue empty. Nothing to publish.", flush=True)
+            print("😴 Queue empty. Nothing to schedule.", flush=True)
             return
 
-        print(f"📊 Found {total_items} items ready to go.", flush=True)
+        print(f"📊 Found {total_items} items. Writing future timestamps...", flush=True)
 
-        # 2. חישוב זמן ההשהייה
-        MAX_DURATION_SECONDS = 720 
-        delay = int(MAX_DURATION_SECONDS / max(total_items, 1))
-        
-        # מגבלות שפיות: לא פחות מ-2 שניות, לא יותר מ-3 דקות בין כתבה לכתבה
-        delay = max(2, min(delay, 180))
+        # נפזר את הכתבות על פני שעתיים (115 דקות ליתר ביטחון)
+        SPREAD_MINUTES = 115 
+        gap_minutes = SPREAD_MINUTES / max(total_items, 1)
 
-        print(f"⏳ Spreading publication. Delay: {delay}s per article.", flush=True)
-        
-        published_count = 0
+        now = datetime.now(timezone.utc)
 
-        for item in queue:
+        for i, item in enumerate(queue):
             title = item['titles'].get('en', 'News')
             
-            # פרסום
-            try:
-                supabase.table('news').update({"is_public": True}).eq('id', item['id']).execute()
-                
-                published_count += 1
-                print(f"✅ ({published_count}/{total_items}) LIVE: {title[:40]}...", flush=True)
-                
-                # מחכים רק אם זו לא הכתבה האחרונה
-                if published_count < total_items:
-                    time.sleep(delay)
-            except Exception as db_err:
-                print(f"🚨 DATABASE PUBLISH ERROR: {db_err}", flush=True)
+            # חישוב השעה העתידית
+            publish_time = now + timedelta(minutes=(i * gap_minutes))
             
-        print("🏁 Queue cleared completely.", flush=True)
+            try:
+                # הפיכה לפומבי אבל עם תאריך פרסום עתידי!
+                supabase.table('news').update({
+                    "is_public": True,
+                    "created_at": publish_time.isoformat() 
+                }).eq('id', item['id']).execute()
+                
+                print(f"✅ Scheduled [{publish_time.strftime('%H:%M:%S UTC')}]: {title[:30]}...", flush=True)
+            except Exception as db_err:
+                print(f"🚨 DATABASE SCHEDULE ERROR: {db_err}", flush=True)
+            
+        print("🏁 Scheduling complete! The frontend will reveal them over time.", flush=True)
             
     except Exception as e:
-        print(f"❌ Publish Error: {e}")
+        print(f"❌ Schedule Error: {e}")
 
 # --- 6. הפונקציה הראשית ---
 
 def run_once():
-    print("⚡ StyleMe Bot: Smart Pulse", flush=True)
+    print("⚡ StyleMe Bot: Smart Scheduled Pulse", flush=True)
     
     # 1. בטיחות
     enforce_secrecy()
     
-    # 2. איסוף מסיבי (הכל נכנס מוסתר)
+    # 2. איסוף מסיבי (הכל נכנס מוסתר, עד 6 דקות)
     harvest_aggressive_time_limited()
     
     # 3. תיקון טיוטות
     process_pending_drafts()
     
-    # 4. פרסום חכם (הכל, בפריסה יחסית)
-    publish_all_spread()
+    # 4. פרסום מתוזמן עתידי (מיידי, ללא השהיות שרת)
+    schedule_publications()
     
     print("🏁 Done.", flush=True)
 
