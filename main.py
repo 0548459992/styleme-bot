@@ -7,16 +7,15 @@ import urllib.parse
 import feedparser
 import requests
 from datetime import datetime, timedelta, timezone
-from supabase import create_client
 from google import genai
 from google.genai import types
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # --- 1. הגדרות ומשתני סביבה ---
 try:
-    SUPABASE_URL = os.environ["SUPABASE_URL"]
-    
-    # חשוב: מומלץ להשתמש ב-SERVICE_ROLE KEY כדי שהבוט יראה כתבות מוסתרות
-    SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+    # מפתח ההתחברות החדש לפיירבייס (כמחרוזת JSON)
+    firebase_creds_json = os.environ["FIREBASE_CREDENTIALS"]
     
     # טעינת רשימת מפתחות (Key Rotation)
     keys_env = os.environ.get("GEMINI_API_KEYS", os.environ.get("GEMINI_API_KEY"))
@@ -29,7 +28,20 @@ except KeyError as e:
     print(f"❌ CRITICAL ERROR: Missing Config: {e}")
     sys.exit(1)
 
-# ניהול מפתחות
+# חיבור לפיירבייס
+try:
+    creds_dict = json.loads(firebase_creds_json)
+    cred = credentials.Certificate(creds_dict)
+    # מוודא שלא מתבצע אתחול כפול
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("✅ Connected to Firebase Firestore")
+except Exception as e:
+    print(f"❌ CRITICAL ERROR: Failed to init Firebase: {e}")
+    sys.exit(1)
+
+# ניהול מפתחות Gemini
 current_key_index = 0
 def get_ai_client():
     return genai.Client(api_key=API_KEYS_POOL[current_key_index])
@@ -43,7 +55,6 @@ def rotate_key():
     return False
 
 client_ai = get_ai_client()
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- 2. שפות ונושאים ---
 LANG_CODES = [
@@ -64,38 +75,30 @@ DIRECT_FEEDS = [
 ]
 
 ALL_TOPICS = [
-    # MARKET
     "Fashion Industry IPO News", "Luxury Brands Stock Performance",
     "Global Fashion Retail Revenue 2026", "Mergers and Acquisitions Fashion",
     "Apparel Consumer Spending Trends", "Emerging Markets Fashion Growth",
-    # LOGISTICS
     "Textile Supply Chain Disruptions", "Fashion Last Mile Delivery",
     "Warehouse Automation Apparel", "Sustainable Packaging Solutions",
     "Cold Chain Logistics Luxury", "Freight Shipping Rates Textiles",
-    # TECH
     "Generative AI Fashion Design", "Virtual Try-On Technology",
     "Digital Product Passports", "Smart Fabrics Wearable Tech",
     "3D Knitting Technology", "Biomaterials Fashion Innovation",
-    # TRENDS
     "Runway Color Trends 2026", "Sustainable Couture Techniques",
     "Avant-Garde Silhouette Trends", "Streetwear Culture Evolution",
     "Gender-Neutral Fashion Design", "Vintage and Resale Market Trends"
 ]
 
-# --- 3. מודלים חסינים (Resilient Models Logic) ---
+# --- 3. מודלים חסינים ---
 def get_dynamic_models():
     try:
         global client_ai
         all_models = list(client_ai.models.list())
         valid_models = []
-        
-        # רשימה שחורה: מילים שאנחנו לא רוצים בשם של המודל (קול, תמונות, גרסאות ישנות)
         bad_words = ['audio', 'tts', 'image', 'vision', 'preview-09', 'preview-12']
         
         for m in all_models:
             name = m.name.lower()
-            
-            # מוודא שיש "flash" אבל שאין אף מילה מהרשימה השחורה
             if "flash" in name and not any(bad in name for bad in bad_words):
                 valid_models.append(m.name.replace("models/", ""))
         
@@ -111,13 +114,11 @@ def get_dynamic_models():
         if rotate_key():
             client_ai = get_ai_client()
             return get_dynamic_models()
-        return ["gemini-2.0-flash", "gemini-1.5-flash"] # Fallback בטוח
+        return ["gemini-2.0-flash", "gemini-1.5-flash"]
 
-# טעינה ראשונית של המודלים
 ACTIVE_MODELS = get_dynamic_models()
 
-# --- 4. המוח: ניתוח תוכן עם התאוששות (Retry Engine) ---
-
+# --- 4. המוח: ניתוח תוכן ---
 def extract_json_smart(text):
     try: return json.loads(text)
     except:
@@ -130,18 +131,16 @@ def extract_json_smart(text):
 
 def check_recent_duplicate(url):
     try:
-        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
-        res = supabase.table("news").select("id").eq("source_url", url).gte("created_at", three_days_ago).execute()
-        return True if res.data else False
+        # פיירבייס: חיפוש לפי URL בלבד מספיק לסינון כפילויות יעיל ומהיר
+        docs = db.collection("news").where("source_url", "==", url).limit(1).get()
+        return len(docs) > 0
     except: return False
 
 def analyze_content(item_title):
     global client_ai
-    
     if not ACTIVE_MODELS:
         get_dynamic_models()
     
-    # הפרומפט החדש: כופה על גוגל מבנה קשיח בלי מקום לאלתורים!
     prompt = f"""
     You are a Global Fashion Intelligence Analyst.
     Analyze this news title: "{item_title}".
@@ -152,12 +151,10 @@ def analyze_content(item_title):
         "titles": {{
             "en": "English translated title",
             "he": "Hebrew translated title"
-            // Continue for all requested languages
         }},
         "summaries": {{
             "en": "English 1-sentence summary",
             "he": "Hebrew 1-sentence summary"
-            // Continue for all requested languages
         }}
     }}
     
@@ -166,9 +163,7 @@ def analyze_content(item_title):
     
     for model_name in ACTIVE_MODELS:
         try:
-            # מנוחה קטנה כדי לא לעצבן את שרתי גוגל
             time.sleep(1.5) 
-            
             response = client_ai.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -178,7 +173,6 @@ def analyze_content(item_title):
             result = extract_json_smart(response.text)
             
             if result:
-                # מנגנון תיקון אוטומטי במקרה שה-AI טעה באיות של המפתחות
                 if 'title' in result and 'titles' not in result:
                     result['titles'] = result.pop('title')
                 if 'summary' in result and 'summaries' not in result:
@@ -186,7 +180,6 @@ def analyze_content(item_title):
                 if 'translations' in result and 'titles' not in result:
                     result['titles'] = result.pop('translations')
                 
-                # בדיקת תקינות הקטגוריה
                 cat = result.get('category', '').upper()
                 valid_cats = ['TRENDS', 'TECH', 'MARKET', 'LOGISTICS']
                 result['category'] = cat if cat in valid_cats else 'TRENDS'
@@ -195,26 +188,19 @@ def analyze_content(item_title):
                 
         except Exception as e:
             err = str(e).lower()
-            
-            # עומס זמני על המודל הספציפי אצל גוגל (503)
             if "503" in err or "unavailable" in err:
-                print(f"⚠️ Model {model_name} is overloaded (503). Trying next model...", flush=True)
+                print(f"⚠️ Model {model_name} is overloaded (503). Trying next...", flush=True)
                 continue
-                
-            # חסימת מהירות/מכסה (Quota - 429)
             elif "429" in err or "quota" in err or "resourceexhausted" in err:
                 if rotate_key():
                     print(f"🔄 Switched Key on {model_name}. Retrying...", flush=True)
                     client_ai = get_ai_client()
                     continue 
                 else:
-                    # הורדנו את ההמתנה ל-30 שניות כדי לחסוך זמן שרת
-                    print(f"⚠️ Key exhausted. Sleeping 30s to let Google reset quota...", flush=True)
+                    print(f"⚠️ Key exhausted. Sleeping 30s...", flush=True)
                     time.sleep(30) 
                     return None 
-                    
-            elif "not found" in err:
-                continue
+            elif "not found" in err: continue
             else:
                 print(f"🚨 DEBUG ERROR on {model_name}: {repr(e)}", flush=True)
                 continue 
@@ -222,21 +208,33 @@ def analyze_content(item_title):
     print("❌ All models failed for this item.", flush=True)
     return None
     
-# --- 5. לוגיקה עסקית ---
+# --- 5. לוגיקה עסקית (פיירבייס) ---
 
 def enforce_secrecy():
-    """מוודא ששום טיוטה או פנדינג לא חשופים לציבור"""
     print("👮 Safety Check: Hiding leaks...", flush=True)
     try:
-        supabase.table('news').update({"is_public": False}).eq('category', 'Pending').execute()
-        supabase.table('news').update({"is_public": False}).eq('needs_full_translation', True).execute()
-    except: pass
+        # פיירבייס: שימוש ב-Batch לעדכון המוני יעיל
+        batch = db.batch()
+        updates_count = 0
+        
+        pending_docs = db.collection('news').where('category', '==', 'Pending').where('is_public', '==', True).get()
+        for doc in pending_docs:
+            batch.update(doc.reference, {"is_public": False})
+            updates_count += 1
+            
+        untranslated_docs = db.collection('news').where('needs_full_translation', '==', True).where('is_public', '==', True).get()
+        for doc in untranslated_docs:
+            batch.update(doc.reference, {"is_public": False})
+            updates_count += 1
+            
+        if updates_count > 0:
+            batch.commit()
+    except Exception as e: 
+        print(f"Secrecy error: {e}")
 
 def harvest_aggressive_time_limited():
     print("🚜 STARTING HARVEST (Hidden Mode)...", flush=True)
-    
     start_time = time.time()
-    # הוגדל ל-6 דקות עבודה מקסימליות (360 שניות) לבקשתך
     TIME_LIMIT_SECONDS = 360 
     
     tasks = []
@@ -265,11 +263,10 @@ def harvest_aggressive_time_limited():
                 print(f"🤖 Processing: {entry.title[:30]}...", flush=True)
                 ai_data = analyze_content(entry.title)
                 
-                # הכל מוסתר בהתחלה
                 item = {
                     "source_url": entry.link,
-                    "created_at": datetime.utcnow().isoformat(),
-                    "likes": 0,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "views": 0, # הוספנו תמיכה במונה צפיות למקרה הצורך
                     "is_public": False 
                 }
 
@@ -290,9 +287,9 @@ def harvest_aggressive_time_limited():
                         "needs_full_translation": True
                     })
                 
-                # תפיסת שגיאות במסד הנתונים כדי שלא ישתקו אותנו
                 try:
-                    supabase.table('news').insert(item).execute()
+                    # הוספת המסמך לקולקציה
+                    db.collection('news').add(item)
                     count += 1
                 except Exception as db_err:
                     print(f"🚨 DATABASE INSERT ERROR: {db_err}", flush=True)
@@ -303,25 +300,25 @@ def harvest_aggressive_time_limited():
     print(f"🚜 Harvest Finished. +{count} hidden items.", flush=True)
 
 def process_pending_drafts():
-    """תיקון טיוטות"""
     print("🛠️ Checking Drafts...", flush=True)
     try:
-        drafts = supabase.table('news').select("*").eq('needs_full_translation', True).limit(5).execute()
-        if not drafts.data: return
+        drafts = db.collection('news').where('needs_full_translation', '==', True).limit(5).get()
+        if not drafts: return
 
-        for item in drafts.data:
-            original_title = item['titles'].get('en') if item['titles'] else "News"
+        for doc in drafts:
+            item = doc.to_dict()
+            original_title = item.get('titles', {}).get('en', 'News')
             ai_data = analyze_content(original_title)
             
             if ai_data and 'en' in ai_data.get('titles', {}):
                 try:
-                    supabase.table('news').update({
+                    doc.reference.update({
                         "category": ai_data.get('category', 'TRENDS'),
                         "titles": ai_data.get('titles'),
                         "summaries": ai_data.get('summaries'),
                         "needs_full_translation": False,
-                        "is_public": False # הופך למוכן אך מוסתר
-                    }).eq('id', item['id']).execute()
+                        "is_public": False
+                    })
                     print("✅ Draft Fixed -> Queue.", flush=True)
                 except Exception as db_err:
                     print(f"🚨 DATABASE UPDATE ERROR: {db_err}", flush=True)
@@ -329,52 +326,43 @@ def process_pending_drafts():
         pass
 
 def schedule_publications():
-    """
-    מערכת התזמון החדשה: מחלקת את הכתבות על פני שעתיים קדימה
-    ללא שימוש ב-Sleep כדי לחסוך זמן שרת!
-    """
     print("📅 Scheduling items for the next 2 hours...", flush=True)
     try:
-        # שולף את כל הכתבות המוכנות
-        res = supabase.table('news').select("id, titles") \
-            .eq('is_public', False) \
-            .eq('needs_full_translation', False) \
-            .neq('category', 'Pending') \
-            .order('created_at', desc=False) \
-            .execute()
-            
-        queue = res.data
+        # שליפת מסמכים לפי סטטוס מוכנות
+        docs = db.collection('news').where('is_public', '==', False).where('needs_full_translation', '==', False).get()
+        
+        # סינון נוסף בזיכרון (פיירבייס מגביל מספר תנאי inequality בשאילתה אחת)
+        queue = [doc for doc in docs if doc.to_dict().get('category') != 'Pending']
         total_items = len(queue)
 
         if total_items == 0:
             print("😴 Queue empty. Nothing to schedule.", flush=True)
             return
 
+        # מיון לפי זמן יצירה מוקדם קודם
+        queue.sort(key=lambda x: x.to_dict().get('created_at', ''))
+
         print(f"📊 Found {total_items} items. Writing future timestamps...", flush=True)
 
-        # נפזר את הכתבות על פני שעתיים (115 דקות ליתר ביטחון)
         SPREAD_MINUTES = 115 
         gap_minutes = SPREAD_MINUTES / max(total_items, 1)
-
         now = datetime.now(timezone.utc)
+        
+        # שימוש ב-Batch לעדכון מסות של נתונים ביעילות
+        batch = db.batch()
 
-        for i, item in enumerate(queue):
-            title = item['titles'].get('en', 'News')
-            
-            # חישוב השעה העתידית
+        for i, doc in enumerate(queue):
+            item = doc.to_dict()
+            title = item.get('titles', {}).get('en', 'News')
             publish_time = now + timedelta(minutes=(i * gap_minutes))
             
-            try:
-                # הפיכה לפומבי אבל עם תאריך פרסום עתידי!
-                supabase.table('news').update({
-                    "is_public": True,
-                    "created_at": publish_time.isoformat() 
-                }).eq('id', item['id']).execute()
-                
-                print(f"✅ Scheduled [{publish_time.strftime('%H:%M:%S UTC')}]: {title[:30]}...", flush=True)
-            except Exception as db_err:
-                print(f"🚨 DATABASE SCHEDULE ERROR: {db_err}", flush=True)
+            batch.update(doc.reference, {
+                "is_public": True,
+                "created_at": publish_time.isoformat() 
+            })
+            print(f"✅ Scheduled [{publish_time.strftime('%H:%M:%S UTC')}]: {title[:30]}...", flush=True)
             
+        batch.commit()
         print("🏁 Scheduling complete! The frontend will reveal them over time.", flush=True)
             
     except Exception as e:
@@ -383,20 +371,11 @@ def schedule_publications():
 # --- 6. הפונקציה הראשית ---
 
 def run_once():
-    print("⚡ StyleMe Bot: Smart Scheduled Pulse", flush=True)
-    
-    # 1. בטיחות
+    print("⚡ StyleMe Bot: Smart Scheduled Pulse (Firebase Edition)", flush=True)
     enforce_secrecy()
-    
-    # 2. איסוף מסיבי (הכל נכנס מוסתר, עד 6 דקות)
     harvest_aggressive_time_limited()
-    
-    # 3. תיקון טיוטות
     process_pending_drafts()
-    
-    # 4. פרסום מתוזמן עתידי (מיידי, ללא השהיות שרת)
     schedule_publications()
-    
     print("🏁 Done.", flush=True)
 
 if __name__ == "__main__":
