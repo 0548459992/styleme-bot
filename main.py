@@ -145,20 +145,25 @@ def analyze_content(item_title):
     You are a Global Fashion Intelligence Analyst.
     Analyze this news title: "{item_title}".
     
-    CRITICAL: You MUST return ONLY a valid JSON object matching this EXACT structure:
+    CRITICAL INSTRUCTION: You MUST return ONLY a valid JSON object.
+    You MUST translate the content into ALL of the following {len(LANG_CODES)} language codes: {LANG_CODES}
+    
+    Match this EXACT structure, but EXPAND the 'titles' and 'summaries' objects to include EVERY SINGLE language code from the list above:
     {{
         "category": "TRENDS", // Choose exactly ONE: MARKET, LOGISTICS, TECH, TRENDS
         "titles": {{
-            "en": "English translated title",
-            "he": "Hebrew translated title"
+            "en": "English title",
+            "he": "Hebrew title",
+            "it": "Italian title"
+            // ... YOU MUST INCLUDE ALL {len(LANG_CODES)} LANGUAGES HERE ...
         }},
         "summaries": {{
             "en": "English 1-sentence summary",
-            "he": "Hebrew 1-sentence summary"
+            "he": "Hebrew 1-sentence summary",
+            "it": "Italian 1-sentence summary"
+            // ... YOU MUST INCLUDE ALL {len(LANG_CODES)} LANGUAGES HERE ...
         }}
     }}
-    
-    Target languages: {LANG_CODES}
     """
     
     for model_name in ACTIVE_MODELS:
