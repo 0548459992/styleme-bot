@@ -131,8 +131,8 @@ def extract_json_smart(text):
 
 def check_recent_duplicate(url):
     try:
-        # פיירבייס: חיפוש לפי URL בלבד מספיק לסינון כפילויות יעיל ומהיר
-        docs = db.collection("news").where("source_url", "==", url).limit(1).get()
+        # עבר לחיפוש בטבלה המאוחדת
+        docs = db.collection("articles").where("source_url", "==", url).limit(1).get()
         return len(docs) > 0
     except: return False
 
@@ -218,16 +218,17 @@ def analyze_content(item_title):
 def enforce_secrecy():
     print("👮 Safety Check: Hiding leaks...", flush=True)
     try:
-        # פיירבייס: שימוש ב-Batch לעדכון המוני יעיל
         batch = db.batch()
         updates_count = 0
         
-        pending_docs = db.collection('news').where('category', '==', 'Pending').where('is_public', '==', True).get()
+        # עבר לטבלה המאוחדת
+        pending_docs = db.collection('articles').where('category', '==', 'Pending').where('is_public', '==', True).get()
         for doc in pending_docs:
             batch.update(doc.reference, {"is_public": False})
             updates_count += 1
             
-        untranslated_docs = db.collection('news').where('needs_full_translation', '==', True).where('is_public', '==', True).get()
+        # עבר לטבלה המאוחדת
+        untranslated_docs = db.collection('articles').where('needs_full_translation', '==', True).where('is_public', '==', True).get()
         for doc in untranslated_docs:
             batch.update(doc.reference, {"is_public": False})
             updates_count += 1
@@ -268,11 +269,13 @@ def harvest_aggressive_time_limited():
                 print(f"🤖 Processing: {entry.title[:30]}...", flush=True)
                 ai_data = analyze_content(entry.title)
                 
+                # הוספת "type": "radar" כדי לשמור על סדר במסד הנתונים
                 item = {
                     "source_url": entry.link,
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    "views": 0, # הוספנו תמיכה במונה צפיות למקרה הצורך
-                    "is_public": False 
+                    "views": 0, 
+                    "is_public": False,
+                    "type": "radar"
                 }
 
                 if ai_data and 'en' in ai_data.get('titles', {}):
@@ -293,8 +296,8 @@ def harvest_aggressive_time_limited():
                     })
                 
                 try:
-                    # הוספת המסמך לקולקציה
-                    db.collection('news').add(item)
+                    # עבר לטבלה המאוחדת
+                    db.collection('articles').add(item)
                     count += 1
                 except Exception as db_err:
                     print(f"🚨 DATABASE INSERT ERROR: {db_err}", flush=True)
@@ -307,7 +310,8 @@ def harvest_aggressive_time_limited():
 def process_pending_drafts():
     print("🛠️ Checking Drafts...", flush=True)
     try:
-        drafts = db.collection('news').where('needs_full_translation', '==', True).limit(5).get()
+        # עבר לטבלה המאוחדת
+        drafts = db.collection('articles').where('needs_full_translation', '==', True).limit(5).get()
         if not drafts: return
 
         for doc in drafts:
@@ -333,10 +337,9 @@ def process_pending_drafts():
 def schedule_publications():
     print("📅 Scheduling items for the next 2 hours...", flush=True)
     try:
-        # שליפת מסמכים לפי סטטוס מוכנות
-        docs = db.collection('news').where('is_public', '==', False).where('needs_full_translation', '==', False).get()
+        # עבר לטבלה המאוחדת
+        docs = db.collection('articles').where('type', '==', 'radar').where('is_public', '==', False).where('needs_full_translation', '==', False).get()
         
-        # סינון נוסף בזיכרון (פיירבייס מגביל מספר תנאי inequality בשאילתה אחת)
         queue = [doc for doc in docs if doc.to_dict().get('category') != 'Pending']
         total_items = len(queue)
 
@@ -344,7 +347,6 @@ def schedule_publications():
             print("😴 Queue empty. Nothing to schedule.", flush=True)
             return
 
-        # מיון לפי זמן יצירה מוקדם קודם
         queue.sort(key=lambda x: x.to_dict().get('created_at', ''))
 
         print(f"📊 Found {total_items} items. Writing future timestamps...", flush=True)
@@ -353,7 +355,6 @@ def schedule_publications():
         gap_minutes = SPREAD_MINUTES / max(total_items, 1)
         now = datetime.now(timezone.utc)
         
-        # שימוש ב-Batch לעדכון מסות של נתונים ביעילות
         batch = db.batch()
 
         for i, doc in enumerate(queue):
